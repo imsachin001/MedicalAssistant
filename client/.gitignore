@@ -1,15 +1,16 @@
-# Node.js dependencies
+# Node modules
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
 # Build output
 dist/
 build/
-out/
 
-# Environment files
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
 .env
 .env.local
 .env.development.local
@@ -23,12 +24,7 @@ Thumbs.db
 # IDE files
 .vscode/
 .idea/
-*.sublime-workspace
-*.sublime-project
+*.swp
 
 # Misc
 *.log
-*.tgz
-*.zip
-*.tmp
-*.bak

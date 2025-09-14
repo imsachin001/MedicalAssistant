@@ -6,9 +6,14 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
+  "devDependencies": {
+    "vite": "^7.1.5",
+    "@vitejs/plugin-react": "^5.0.2"
+  },
   "scripts": {
-    "start": "echo 'Use Vite or Webpack for development'",
-    "build": "echo 'Use Vite or Webpack for production build'",
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
     "test": "echo 'No tests specified'"
   }
 }
