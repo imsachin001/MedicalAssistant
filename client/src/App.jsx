@@ -1,12 +1,12 @@
 import React from 'react';
+import Navbar from './components/Navbar';
+import Home from './pages/Home';
 
-const App = () => {
-  return (
-    <main style={{ fontFamily: 'sans-serif', padding: '2rem' }}>
-      <h1>MedicalChatbot</h1>
-      <p>Welcome to your React client app!</p>
-    </main>
-  );
-};
+const App = () => (
+  <>
+    <Navbar />
+    <Home />
+  </>
+);
 
 export default App;

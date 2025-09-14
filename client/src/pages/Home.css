@@ -1,0 +1,76 @@
+.home {
+  font-family: 'Inter', sans-serif;
+  padding: 2rem;
+  background: #f7fafd;
+  min-height: 100vh;
+}
+.home__heading {
+  font-size: 3rem;
+  font-weight: 700;
+  margin: 2rem 0 1rem 0;
+  color: #222;
+}
+.home__gradient {
+  background: linear-gradient(90deg, #b6a1e7, #5c5cfc, #e7b6e7);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 700;
+  font-size: 2.5rem;
+  font-family: 'Inter', sans-serif;
+}
+.home__cards {
+    width: 100%;
+  display: flex;
+  gap: 2rem;
+  margin: 2rem 0;
+  flex-wrap: wrap;
+}
+.home__card {
+  background: #fff;
+  border-radius: 1.2rem;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.07);
+  padding: 2rem;
+  flex: 1 1 350px;
+  min-width: 320px;
+  max-width: 100%;
+}
+
+.home__card-title {
+  font-weight: 550;
+  font-size: 1.5rem;
+  margin-bottom: 0.5rem;
+  opacity: 0.79;
+}
+.home__card-subtitle {
+  font-weight: 400;
+  font-size: 1.1rem;
+  margin-bottom: 0.5rem;
+  opacity: 0.68;
+}
+
+.home__card-text {
+  color: #444;
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+  opacity: 0.6;
+}
+
+.home__try-btn {
+  margin: 2rem auto;
+  display: block;
+  background: linear-gradient(90deg, #b6a1e7, #7b7be5, #e7b6e7);
+  color: #fff;
+  border: none;
+  border-radius: 2rem;
+  padding: 1rem 2.5rem;
+  font-weight: 700;
+  font-size: 1.2rem;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(123,123,229,0.08);
+  font-family: 'Inter', sans-serif;
+  transition: background 0.3s;
+}
+.home__try-btn:hover {
+  background: linear-gradient(90deg, #7b7be5, #b6a1e7, #e7b6e7);
+}

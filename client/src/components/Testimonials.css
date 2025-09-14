@@ -1,0 +1,62 @@
+.testimonials {
+  background: #f7fafd;
+  padding: 3rem 2rem 2rem 2rem;
+  text-align: center;
+  font-family: 'Inter', sans-serif;
+}
+.testimonials__heading {
+  font-size: 2.1rem;
+  font-weight: 700;
+  color: #444;
+  margin-bottom: 0.5rem;
+}
+.testimonials__subheading {
+  font-size: 1.2rem;
+  color: #666;
+  margin-bottom: 2.5rem;
+}
+.testimonials__cards {
+  display: flex;
+  gap: 2rem;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.testimonial__card {
+  background: #fff;
+  border-radius: 1.2rem;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.07);
+  padding: 2rem 1.5rem;
+  min-width: 320px;
+  max-width: 350px;
+  flex: 1 1 320px;
+  margin-bottom: 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.testimonial__name {
+  font-weight: 600;
+  font-size: 1.3rem;
+  color: #333;
+  margin-bottom: 0.5rem;
+  opacity: 0.85;
+}
+.testimonial__role {
+  font-weight: 600;
+  font-size: 1.1rem;
+  margin-bottom: 1rem;
+}
+.testimonial__role--doctor {
+  color: #e07cff;
+}
+.testimonial__role--user {
+  color: #e07cff;
+}
+.testimonial__text {
+  color: #444;
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+  text-align: center;
+  line-height: 27px;
+  opacity: 0.85;
+}
