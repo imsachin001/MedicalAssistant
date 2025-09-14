@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.env
+*.venv
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+
+# Environment variables
+.env
+
+# Data files
+*.sqlite3
+*.db
+*.csv
+*.tsv
+
+# Model files
+*.h5
+*.pt
+*.pth
+*.ckpt
+
+# OneDrive temp files
+~$*
+
+# MedicalAI specific
+data/
+models/
+outputs/
