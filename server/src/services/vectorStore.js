@@ -1,25 +1,11 @@
-import { PineconeClient } from '@pinecone-database/pinecone';
-import { OpenAIEmbeddings } from '@langchain/openai';
-import dotenv from 'dotenv';
-dotenv.config();
+import { queryPinecone, generateAnswer } from '../query.js';
 
-export async function getRelevantChunks(query) {
-	const pc = new PineconeClient();
-	await pc.init({
-		apiKey: process.env.PINECONE_API_KEY,
-		environment: process.env.PINECONE_ENV,
-	});
-	const index = pc.Index(process.env.PINECONE_INDEX);
+export async function getRelevantChunks(question) {
+  // Use the same logic as queryPinecone in query.js
+  return (await queryPinecone(question)).matches || [];
+}
 
-	const embeddings = new OpenAIEmbeddings({ apiKey: process.env.OPENAI_API_KEY });
-	const queryEmbedding = await embeddings.embedQuery(query);
-
-	// Query Pinecone for top 5 relevant chunks
-	const results = await index.query({
-		topK: 5,
-		vector: queryEmbedding,
-		includeMetadata: true,
-	});
-	// Return the text of the top chunks
-	return results.matches.map(match => match.metadata.text);
+// Accepts { message, history } for context-aware answers
+export async function getLLMResponse({ message, history }, contextChunks) {
+  return await generateAnswer({ message, history }, contextChunks);
 }

@@ -9,7 +9,7 @@ import { Pinecone } from "@pinecone-database/pinecone";
 const __dirname = path.resolve();
 const docsFolder = path.join(__dirname, "docs");
 const indexName = "medical-knowledge"; // must exist in Pinecone
-const BATCH_SIZE = 40; // adjust depending on your system
+const BATCH_SIZE = 50;
 // ------------------------------------
 
 // 1. Init Pinecone client
@@ -23,56 +23,55 @@ console.log("⏳ Loading embedding model...");
 const extractor = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
 console.log("✅ Model loaded");
 
-// 3. Function to embed text into vectors
+// 3. Embed text into vectors
 async function embedText(text) {
   const result = await extractor(text, { pooling: "mean", normalize: true });
-  return Array.from(result.data); // tensor -> JS array
+  return Array.from(result.data);
 }
 
-// 4. Function to split text semantically
-function smartChunk(text, chunkSize = 800, overlap = 100) {
-  // First split by paragraphs
-  const paragraphs = text.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
-
+// 4. Simple text splitter (can be improved later)
+function smartChunk(text, chunkSize = 800) {
+  const sentences = text.split(/(?<=[.?!])\s+/);
+  let current = "";
   const chunks = [];
-  for (const para of paragraphs) {
-    if (para.length <= chunkSize) {
-      chunks.push(para);
-    } else {
-      // If too big, further split into sentences
-      const sentences = para.split(/(?<=[.?!])\s+/);
-      let current = "";
 
-      for (const sentence of sentences) {
-        if ((current + sentence).length > chunkSize) {
-          chunks.push(current.trim());
-          current = sentence;
-        } else {
-          current += " " + sentence;
-        }
-      }
-      if (current.trim()) chunks.push(current.trim());
+  for (const sentence of sentences) {
+    if ((current + sentence).length > chunkSize) {
+      chunks.push(current.trim());
+      current = sentence;
+    } else {
+      current += " " + sentence;
     }
   }
-
-  // Apply overlap between chunks
-  const overlapped = [];
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    if (i > 0) {
-      const overlapText = chunks[i - 1].slice(-overlap);
-      overlapped.push(overlapText + " " + chunk);
-    } else {
-      overlapped.push(chunk);
-    }
-  }
-
-  return overlapped;
+  if (current.trim()) chunks.push(current.trim());
+  return chunks;
 }
 
-// 5. Ingestion pipeline
+// 5. Extract disease name + section from chunk text
+function classifyChunk(chunk) {
+  const lower = chunk.toLowerCase();
+  let section = "general";
+
+  if (lower.includes("symptom") || lower.includes("sign")) {
+    section = "symptoms";
+  } else if (lower.includes("treatment") || lower.includes("therapy") || lower.includes("management")) {
+    section = "treatments";
+  } else if (lower.includes("food") || lower.includes("diet") || lower.includes("nutrition")) {
+    section = "food";
+  } else if (lower.includes("advice") || lower.includes("suggest") || lower.includes("recommend")) {
+    section = "suggestions";
+  }
+
+  // naive disease name extraction (first capitalized word)
+  const match = chunk.match(/\b([A-Z][a-z]+)\b/);
+  const disease = match ? match[1] : "Unknown";
+
+  return { disease, section };
+}
+
+// 6. Ingestion pipeline
 async function ingest() {
-  console.log(">>> Running improved ingest.js");
+  console.log(">>> Running structured ingest.js");
 
   let pdfFiles = [];
   try {
@@ -94,11 +93,7 @@ async function ingest() {
     const dataBuffer = fs.readFileSync(pdfPath);
     const pdfData = await pdfParse(dataBuffer);
 
-    // Extract text + pages
-    const text = pdfData.text;
-
-    // Split into semantic chunks
-    const chunks = smartChunk(text);
+    const chunks = smartChunk(pdfData.text);
     console.log(`📄 ${pdfFile}: split into ${chunks.length} semantic chunks`);
 
     // ✅ Embed + upsert in batches
@@ -107,7 +102,9 @@ async function ingest() {
 
       const vectors = await Promise.all(
         batch.map(async (chunk, idx) => {
+          const { disease, section } = classifyChunk(chunk);
           const vector = await embedText(chunk);
+
           return {
             id: `${pdfFile}-${i + idx}`,
             values: vector,
@@ -115,6 +112,8 @@ async function ingest() {
               text: chunk,
               source: pdfFile,
               chunkIndex: i + idx,
+              disease,
+              section, // 👈 NEW: symptoms / treatments / food / suggestions
             },
           };
         })
@@ -127,7 +126,7 @@ async function ingest() {
     }
   }
 
-  console.log("🎉 All PDFs have been semantically ingested into Pinecone!");
+  console.log("🎉 Structured ingestion complete!");
 }
 
 ingest().catch(err => console.error("❌ Error in ingestion:", err));
