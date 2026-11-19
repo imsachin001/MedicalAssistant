@@ -396,14 +396,11 @@ function getInitialTopicResponse(topicType) {
 
 // Generate comprehensive response for completed symptom pipeline
 async function generateComprehensiveResponse(message, symptomType, summary, startTime) {
-  const ollamaStatus = await getOllamaStatus();
-  
-  if (ollamaStatus.available && ollamaStatus.fastestModel) {
-    const needsDisclaimer = checkIfNeedsDisclaimer(message) || dialogueState.severity === 'severe';
+  const needsDisclaimer = checkIfNeedsDisclaimer(message) || dialogueState.severity === 'severe';
     
-    const disclaimerInstruction = needsDisclaimer ? 
-      'Start with: "⚠️ *I am an AI assistant providing general health information only. Always consult healthcare professionals for medical advice.*"' : 
-      '';
+  const disclaimerInstruction = needsDisclaimer
+    ? "Start with: ⚠️ *I am an AI assistant providing general health information only. Always consult healthcare professionals for medical advice.*"
+    : "";
     
     const prompt = `You are a medical AI assistant providing comprehensive information about ${symptomType}.
 
@@ -419,19 +416,19 @@ Provide a comprehensive response (4-6 lines) covering:
 
 Keep it informative but concise, and end with asking if they would like more details about any aspect.`;
 
-    const response = await queryOllamaLight(prompt, ollamaStatus.fastestModel);
+  const aiResult = await queryAIModel(prompt);
+  const response = aiResult?.response;
     
-    if (response && response.length > 50) {
+  if (response && response.length > 50) {
       const result = {
         ok: true,
         type: "comprehensive_symptom",
         message: response,
-        model_used: ollamaStatus.fastestModel,
+        model_used: aiResult.model,
         responseTime: Date.now() - startTime
       };
       
-      return updateContextAndReturn(message, response, result);
-    }
+    return updateContextAndReturn(message, response, result);
   }
   
   // Fallback comprehensive response
@@ -446,16 +443,13 @@ Keep it informative but concise, and end with asking if they would like more det
 
 // Generate topic recommendations for treatment/exercise/nutrition
 async function generateTopicRecommendations(message, topicType, startTime) {
-  const ollamaStatus = await getOllamaStatus();
-  
-  if (ollamaStatus.available && ollamaStatus.fastestModel) {
-    const needsDisclaimer = topicType === 'treatment' && checkIfNeedsDisclaimer(message);
+  const needsDisclaimer = topicType === 'treatment' && checkIfNeedsDisclaimer(message);
     
     const prompt = `You are a helpful AI assistant providing ${topicType} recommendations.
 
 User's information: ${JSON.stringify(dialogueState.userInfo)}
 
-${needsDisclaimer ? 'Start with: "⚠️ *I am an AI assistant providing general health information only. Always consult healthcare professionals for medical advice.*"' : ''}
+${needsDisclaimer ? "Start with: ⚠️ *I am an AI assistant providing general health information only. Always consult healthcare professionals for medical advice.*" : ""}
 
 Provide specific recommendations (4-6 lines) for ${topicType} based on their information:
 - 2-3 specific recommendations
@@ -465,19 +459,19 @@ Provide specific recommendations (4-6 lines) for ${topicType} based on their inf
 
 Keep it practical and actionable, ending with offering more details.`;
 
-    const response = await queryOllamaLight(prompt, ollamaStatus.fastestModel);
+  const aiResult = await queryAIModel(prompt);
+  const response = aiResult?.response;
     
-    if (response && response.length > 50) {
+  if (response && response.length > 50) {
       const result = {
         ok: true,
         type: "topic_recommendations",
         message: response,
-        model_used: ollamaStatus.fastestModel,
+        model_used: aiResult.model,
         responseTime: Date.now() - startTime
       };
       
-      return updateContextAndReturn(message, response, result);
-    }
+    return updateContextAndReturn(message, response, result);
   }
   
   // Fallback recommendations
@@ -492,23 +486,20 @@ Keep it practical and actionable, ending with offering more details.`;
 
 // Generate general response for non-structured conversations
 async function generateGeneralResponse(message, intent, startTime) {
-  const ollamaStatus = await getOllamaStatus();
-  
-  if (ollamaStatus.available && ollamaStatus.fastestModel) {
-    const prompt = createConcisePrompt(message, intent, "");
-    const response = await queryOllamaLight(prompt, ollamaStatus.fastestModel);
+  const prompt = createConcisePrompt(message, intent, "");
+  const aiResult = await queryAIModel(prompt);
+  const response = aiResult?.response;
     
-    if (response && response.length > 20) {
+  if (response && response.length > 20) {
       const result = {
         ok: true,
         type: "general_response",
         message: response,
-        model_used: ollamaStatus.fastestModel,
+        model_used: aiResult.model,
         responseTime: Date.now() - startTime
       };
       
-      return updateContextAndReturn(message, response, result);
-    }
+    return updateContextAndReturn(message, response, result);
   }
   
   // Use fallback knowledge base
@@ -587,12 +578,74 @@ async function queryOllamaLight(prompt, model = 'gemma3:1b') {
         num_predict: 220
       }
     });
-    
+
     return response.response?.trim() || "";
   } catch (error) {
     console.error("Ollama query error:", error.message);
     return null;
   }
+}
+
+async function queryGeminiLight(prompt) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+
+  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: 0.3,
+          topP: 0.8,
+          maxOutputTokens: 220
+        }
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error?.message || `Gemini request failed with status ${response.status}`);
+    }
+
+    const text = data.candidates?.[0]?.content?.parts
+      ?.map(part => part.text || '')
+      .join('')
+      .trim();
+
+    return text || null;
+  } catch (error) {
+    console.error('Gemini query error:', error.message);
+    return null;
+  }
+}
+
+async function queryAIModel(prompt) {
+  if (process.env.GEMINI_API_KEY) {
+    console.log('🤖 Querying Gemini...');
+    const geminiResponse = await queryGeminiLight(prompt);
+    if (geminiResponse) {
+      return {
+        response: geminiResponse,
+        model: process.env.GEMINI_MODEL || 'gemini-2.0-flash'
+      };
+    }
+  }
+
+  const ollamaStatus = await getOllamaStatus();
+  if (ollamaStatus.available && ollamaStatus.fastestModel) {
+    console.log(`🤖 Querying Ollama: ${ollamaStatus.fastestModel}`);
+    const ollamaResponse = await queryOllamaLight(prompt, ollamaStatus.fastestModel);
+    if (ollamaResponse) {
+      return { response: ollamaResponse, model: ollamaStatus.fastestModel };
+    }
+  }
+
+  return null;
 }
 
 // Check Ollama status
@@ -710,29 +763,23 @@ export async function generateAnswer({ message, history = [] }, contextChunks = 
         console.log(`📝 Context: ${globalContext.sessionSummary || 'Using history'}`);
         console.log(`📝 Last query: "${lastUserMessage ? lastUserMessage.substring(0, 50) : 'none'}..."`);
         
-        // Check Ollama status first for context-aware response
-        const ollamaStatus = await getOllamaStatus();
-        
-        if (ollamaStatus.available && ollamaStatus.fastestModel) {
-          const contextualPrompt = createConcisePrompt(resolvedMessage, intent, "");
-          
-          console.log("⚡ Querying model for detailed follow-up...");
-          const response = await queryOllamaLight(contextualPrompt, ollamaStatus.fastestModel);
-          
-          if (response && response.length > 50) {
+        const contextualPrompt = createConcisePrompt(resolvedMessage, intent, "");
+        const aiResult = await queryAIModel(contextualPrompt);
+
+        if (aiResult?.response && aiResult.response.length > 50) {
+          const response = aiResult.response;
             console.log(`✅ Contextual follow-up response in ${Date.now() - startTime}ms`);
             
             const result = {
               ok: true,
               type: "contextual_detailed",
               message: response,
-              model_used: ollamaStatus.fastestModel,
+              model_used: aiResult.model,
               contextUsed: true,
               responseTime: Date.now() - startTime
             };
             
             return updateContextAndReturn(resolvedMessage, response, result);
-          }
         }
         
         // Fallback: Provide a generic clarification based on context
@@ -760,17 +807,12 @@ export async function generateAnswer({ message, history = [] }, contextChunks = 
       });
     }
     
-    // Check Ollama availability for medical queries
-    console.log("🤖 Checking Ollama...");
-    const ollamaStatus = await getOllamaStatus();
-    
-    if (ollamaStatus.available && ollamaStatus.fastestModel) {
-      console.log(`🚀 Using fastest model: ${ollamaStatus.fastestModel}`);
-      
+    // Query the configured hosted model, with Ollama as a local fallback
+    const aiResult = await queryAIModel(createConcisePrompt(resolvedMessage, intent, ""));
+
+    if (aiResult?.response) {
       const prompt = createConcisePrompt(resolvedMessage, intent, "");
-      
-      console.log("⚡ Querying model...");
-      const response = await queryOllamaLight(prompt, ollamaStatus.fastestModel);
+      const response = aiResult.response;
       
       if (response && response.length > 20) {
         console.log(`✅ AI response in ${Date.now() - startTime}ms`);
@@ -779,7 +821,7 @@ export async function generateAnswer({ message, history = [] }, contextChunks = 
           ok: true,
           type: "medical",
           message: response,
-          model_used: ollamaStatus.fastestModel,
+          model_used: aiResult.model,
           responseTime: Date.now() - startTime
         };
         
