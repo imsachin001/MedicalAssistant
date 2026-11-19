@@ -1,7 +1,7 @@
 import React from 'react';
 import './Navbar.css';
 
-const Navbar = ({ setPage }) => (
+const Navbar = ({ setPage, user, onLogin, onSignup, onLogout }) => (
   <nav className="navbar">
     <div className="navbar__left">
       <button className="navbar__menu" aria-label="Menu">&#9776;</button>
@@ -10,11 +10,19 @@ const Navbar = ({ setPage }) => (
     <div className="navbar__links">
       <button className="navbar__link" onClick={() => setPage('home')}>Home</button>
       <button className="navbar__link" onClick={() => setPage('assistant')}>Assistant</button>
-      <button className="navbar__link" onClick={() => setPage('track')}>Track</button>
     </div>
     <div className="navbar__right">
-      <button className="navbar__btn">Sign Up</button>
-      <button className="navbar__btn">Log In</button>
+      {user ? (
+        <>
+          <span className="navbar__user">{user.name}</span>
+          <button className="navbar__btn" onClick={onLogout}>Log Out</button>
+        </>
+      ) : (
+        <>
+          <button className="navbar__btn" onClick={onSignup}>Sign Up</button>
+          <button className="navbar__btn" onClick={onLogin}>Log In</button>
+        </>
+      )}
     </div>
   </nav>
 );

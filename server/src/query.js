@@ -1,226 +1,295 @@
+// query.js
 import "dotenv/config";
 import { Pinecone } from "@pinecone-database/pinecone";
-
-// -------- CONFIG --------
-const indexName = "medical-knowledge";
-const OLLAMA_MODEL = "gemma3:1b"; 
-// ------------------------
-
-// 1. Init Pinecone client
-const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
-const index = pc.index(indexName);
-
-// 2. Load embedding model
 import { pipeline } from "@xenova/transformers";
-let extractor;
+
+// -------- CONFIG ----------
+const INDEX_NAME = "medical-knowledge";
+const OLLAMA_MEDICAL = process.env.OLLAMA_MEDICAL_MODEL || "gemma3:1b";
+const OLLAMA_FALLBACK = process.env.OLLAMA_FALLBACK_MODEL || "phi3";
+const PINECONE_API_KEY = process.env.PINECONE_API_KEY;
+const TOPK = 8;
+const RELEVANCE_THRESHOLD = 0.20; // semantic threshold for "relevant" (tuneable)
+// ---------------------------
+
+// Init Pinecone client
+const pc = new Pinecone({ apiKey: PINECONE_API_KEY });
+const index = pc.index(INDEX_NAME);
+
+// Xenova extractor lazy-load
+let extractor = null;
 async function getExtractor() {
   if (!extractor) {
-    console.log("⏳ Loading embedding model...");
+    console.log("⏳ Loading Xenova embedding model...");
     extractor = await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2");
     console.log("✅ Embedding model loaded");
   }
   return extractor;
 }
 
-// Helper: embed text
-async function embedText(text) {
+export async function embedText(text) {
   const ext = await getExtractor();
-  const result = await ext(text, { pooling: "mean", normalize: true });
-  return Array.from(result.data);
+  const res = await ext(text, { pooling: "mean", normalize: true });
+  return Array.from(res.data);
 }
 
-// 3. Query Pinecone
-export async function queryPinecone(query, topK = 10) {
-  const queryVector = await embedText(query);
-  return await index.query({
-    topK,
-    vector: queryVector,
-    includeMetadata: true,
-  });
-}
-
-// 4. Call Ollama locally
-async function queryOllama(prompt) {
-  const response = await fetch("http://localhost:11434/api/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: OLLAMA_MODEL,
-      prompt,
-      stream: false,
-    }),
-    signal: AbortSignal.timeout(300000)
-  });
-
-  if (!response.ok) {
-    throw new Error(`Ollama error: ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  return data.response.trim();
-}
-
-// 5. Semantic similarity
-function cosineSimilarity(a, b) {
-  let dot = 0, normA = 0, normB = 0;
+function cosineSimilarity(a = [], b = []) {
+  if (!a || !b || a.length === 0 || b.length === 0) return 0;
+  let dot = 0, na = 0, nb = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
-    normA += a[i] * a[i];
-    normB += b[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
   }
-  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-// Reformulate follow-up queries
-function reformulateQuery(message, history) {
-  if (!history || history.length === 0) return message;
-  const lastUser = [...history].reverse().find(m => m.role === 'user');
-  if (lastUser && message.split(' ').length < 6) {
-    return `${lastUser.text} -> ${message}`;
-  }
-  return message;
+async function queryOllama(prompt, model = OLLAMA_MEDICAL) {
+  const res = await fetch("http://localhost:11434/api/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, prompt, stream: false }),
+    signal: AbortSignal.timeout(300000)
+  });
+  if (!res.ok) throw new Error(`Ollama error: ${res.status} ${res.statusText}`);
+  const data = await res.json();
+  return data.response?.trim() ?? "";
 }
 
-// NEW: Detect question intent
-function detectIntent(message) {
-  const lower = message.toLowerCase();
-  if (lower.includes("symptom") || lower.includes("sign")) return "symptoms";
-  if (lower.includes("treatment") || lower.includes("cure") || lower.includes("medicine")) return "treatment";
-  if (lower.includes("food") || lower.includes("diet") || lower.includes("nutrition")) return "food";
-  if (lower.includes("suggest") || lower.includes("advice") || lower.includes("recommend")) return "suggestions";
+// Basic intent detection (simple keywords)
+export function detectIntent(message = "") {
+  const lower = (message || "").toLowerCase();
+  if (/\b(symptom|sign|present|presenting)\b/.test(lower)) return "symptoms";
+  if (/\b(treat|therapy|management|medication|drug|medicine|cure)\b/.test(lower)) return "treatments";
+  if (/\b(food|diet|eat|avoid|nutrition)\b/.test(lower)) return "food";
+  if (/\b(suggest|advice|should i|what should i)\b/.test(lower)) return "suggestions";
+  if (/\b(cause|risk|etiology)\b/.test(lower)) return "causes";
+  if (/\b(doctor|see a doctor|consult)\b/.test(lower)) return "when_to_see_doctor";
+  // greetings/followups -> message (non-structured conversational)
+  if (/^(hi|hello|hey|thanks|thank you|are these|is this|is that|is it|can you|please)/i.test(lower)) return "message";
   return "general";
 }
 
-export async function generateAnswer({ message, history }, contextChunks) {
-  console.log("\n[DEBUG] Retrieved context chunks:");
-  contextChunks.forEach((c, i) => {
-    console.log(`Chunk ${i + 1}:\n${c.metadata.text}\n---`);
-  });
-
-  const reformulated = reformulateQuery(message, history);
-  const queryVec = await embedText(reformulated);
-
-  // Rerank
-  let reranked = contextChunks.map(chunk => {
-    const text = chunk.metadata.text || '';
-    return { ...chunk, _score: cosineSimilarity(queryVec, chunk.values || queryVec) };
-  });
-
-  reranked.sort((a, b) => b._score - a._score);
-
-  let filteredChunks = reranked.slice(0, 5);
-
-  const context = filteredChunks.map((c, i) => `# Context ${i + 1}:\n${c.metadata.text}`).join("\n\n");
-
-  // Detect intent
-  const intent = detectIntent(message);
-
-  const sectionInstruction = {
-    symptoms: "Only list the SYMPTOMS related to the disease. Do not include treatments, food, or suggestions.",
-    treatment: "Only provide the TREATMENTS (medical, lifestyle, therapies). Do not include symptoms or food advice.",
-    food: "Only provide FOODS to eat and FOODS to avoid for this condition. Do not include symptoms or treatments.",
-    suggestions: "Only provide general HEALTH SUGGESTIONS and advice. Do not include symptoms, treatments, or food.",
-    general: "Provide a balanced medical answer using symptoms, treatments, foods, and suggestions if relevant."
-  };
-
-  const historyText = Array.isArray(history) && history.length > 0
-    ? history.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n') + `\nUser: ${message}`
-    : `User: ${message}`;
-
-    // Detect which section(s) the user is asking for
-    function detectSections(msg) {
-      const lower = msg.toLowerCase();
-      const sections = [];
-      if (/symptom/.test(lower)) sections.push('symptoms');
-      if (/treat(ment|ing|ed)/.test(lower)) sections.push('treatments');
-      if (/caus(e|es|ed)/.test(lower)) sections.push('causes');
-      if (/doctor|see a doctor|consult/.test(lower)) sections.push('when_to_see_doctor');
-      if (/food|diet|eat|avoid/.test(lower)) sections.push('food');
-      if (/exercise|physical activity|workout|yoga/.test(lower)) sections.push('exercise');
-      // If nothing matched, allow a general conversational response
-      if (sections.length === 0) sections.push('message');
-      return sections;
-    }
-
-    const requestedSections = detectSections(message);
-
-    // Build JSON format string for prompt
-    let jsonFormat = '{\n';
-    if (requestedSections.includes('overview')) jsonFormat += '  "overview": "..."';
-    if (requestedSections.includes('symptoms')) jsonFormat += (jsonFormat.length > 2 ? ',\n' : '') + '  "symptoms": ["..."]';
-    if (requestedSections.includes('causes')) jsonFormat += (jsonFormat.length > 2 ? ',\n' : '') + '  "causes": ["..."]';
-    if (requestedSections.includes('treatments')) jsonFormat += (jsonFormat.length > 2 ? ',\n' : '') + '  "treatments": ["..."]';
-    if (requestedSections.includes('when_to_see_doctor')) jsonFormat += (jsonFormat.length > 2 ? ',\n' : '') + '  "when_to_see_doctor": ["..."]';
-    if (requestedSections.includes('food')) jsonFormat += (jsonFormat.length > 2 ? ',\n' : '') + '  "food": ["..."]';
-    if (requestedSections.includes('exercise')) jsonFormat += (jsonFormat.length > 2 ? ',\n' : '') + '  "exercise": ["..."]';
-    if (requestedSections.includes('message')) jsonFormat += (jsonFormat.length > 2 ? ',\n' : '') + '  "message": "..."';
-    jsonFormat += '\n}';
-
-    const prompt = `
-  You are a helpful and knowledgeable medical AI assistant.
-  Your response MUST be valid JSON in the following format:
-  ${jsonFormat}
-
-  Food and exercise must always be separate fields. Never mix food and exercise in the same array or field.
-  For food, provide at least 3-5 specific items (e.g., foods to eat or avoid) if possible.
-  For exercise, provide at least 3-5 specific types of exercise, including yoga asanas or physical activities if relevant. List them as separate items (e.g., "Brisk walking", "Cycling", "Surya Namaskar (yoga)", "Swimming", "Jogging").
-  If a section is not relevant or information is missing, return an empty array or an empty string for that section.
-
-  User intent: ${intent}
-
-  Your task is to answer user questions using the context provided below. Prefer the context, but if it does not contain enough information, you may use your own medical knowledge to provide a complete answer. If you use your own knowledge, clearly indicate which parts are from your internal knowledge.
-
-  Guidelines:
-  - Only answer the specific section(s) requested by the user (e.g., symptoms, treatments, causes, food, exercise, etc.).
-  - Use bullet points (array of strings) for each section.
-  - Never mix food and exercise in the same field.
-  - If the user's question is a general or conversational follow-up (e.g., "Are these correct?", "Is this true?", "Can you confirm?"), respond naturally in the 'message' field with a conversational answer (e.g., "Yes, those are correct symptoms.").
-  - Focus first on the relevant information from the context.
-  - If the context is insufficient, supplement with your own medical knowledge and clearly mark those parts.
-  - Ignore unrelated side effects, lab procedures, or non-medical details.
-  - Be concise, medically accurate, and avoid unnecessary repetition.
-
-  Conversation so far:
-  ${historyText}
-
-  Context:
-  ${context}
-
-  Respond ONLY with the JSON object described above. Do not include any extra text or explanation.
-  `;
-
-    console.log("⏳ Asking Ollama model (structured JSON):", OLLAMA_MODEL);
-    const raw = await queryOllama(prompt);
-
-    // Try to parse JSON from LLM output
-    let parsed = null;
-    try {
-      const jsonStart = raw.indexOf('{');
-      const jsonEnd = raw.lastIndexOf('}') + 1;
-      parsed = JSON.parse(raw.slice(jsonStart, jsonEnd));
-    } catch (e) {
-      console.error('[ERROR] Failed to parse LLM JSON output:', e, '\nRaw output:', raw);
-      // fallback: return as plain text
-      parsed = { overview: '', symptoms: [], causes: [], treatments: [], when_to_see_doctor: [], raw };
-    }
-    return parsed;
-
-  console.log("⏳ Asking Ollama model:", OLLAMA_MODEL);
-  return await queryOllama(prompt);
+// Detect which structured sections user likely wants
+function detectSections(message = "") {
+  const lower = (message || "").toLowerCase();
+  const sections = [];
+  if (/\b(symptom|sign|present)\b/.test(lower)) sections.push("symptoms");
+  if (/\b(treat|therapy|manage|medication)\b/.test(lower)) sections.push("treatments");
+  if (/\b(food|diet|nutrition|eat|avoid)\b/.test(lower)) sections.push("food");
+  if (/\b(cause|risk|etiology)\b/.test(lower)) sections.push("causes");
+  if (/\b(doctor|see a doctor|consult)\b/.test(lower)) sections.push("when_to_see_doctor");
+  if (sections.length === 0) sections.push("message");
+  return sections;
 }
 
-// 6. Main
-if (process.argv[1] === new URL(import.meta.url).pathname) {
-  (async () => {
-    const question = "What are the symptoms of pneumonia?";
-    console.log("🔎 Querying for:", question);
+/**
+ * Retrieve relevant chunks from Pinecone.
+ * If an intent (section) is passed, we apply a metadata filter { section: intent }.
+ * Returns { matches, maxScore }.
+ */
+export async function getRelevantChunks(query, intent = null, topK = TOPK) {
+  const qvec = await embedText(query);
+  const filter = intent && intent !== "general" && intent !== "message" ? { section: intent } : undefined;
 
-    const results = await queryPinecone(question);
-    const chunks = results.matches || [];
+  const res = await index.query({
+    vector: qvec,
+    topK,
+    includeMetadata: true,
+    filter
+  });
 
-    console.log(`📑 Retrieved ${chunks.length} relevant chunks from Pinecone.`);
+  const matches = (res?.matches || []).map(m => {
+    // Normalize representation: some clients return score or values
+    return {
+      id: m.id,
+      score: typeof m.score === "number" ? m.score : null,
+      values: m.values || m.vector || null,
+      metadata: m.metadata || {}
+    };
+  });
 
-    const finalAnswer = await generateAnswer({ message: question, history: [] }, chunks);
-    console.log("\n💡 Final Answer:\n", finalAnswer);
-  })().catch(err => console.error(err));
+  // compute semantic similarity (if values present)
+  let maxScore = 0;
+  for (const m of matches) {
+    if (m.values && Array.isArray(m.values)) {
+      const sim = cosineSimilarity(qvec, m.values);
+      if (sim > maxScore) maxScore = sim;
+      m._sim = sim;
+    } else {
+      m._sim = m.score ?? 0;
+      if (m._sim > maxScore) maxScore = m._sim;
+    }
+  }
+
+  return { matches, maxScore, qvec };
+}
+
+/**
+ * Main generator function for medical answers.
+ * - Expects the caller to pass relevant context chunks (or let it fetch them).
+ * - Returns an object:
+ *    { ok: true, type: 'medical', structured: <object>, message: <string> }
+ *    OR { ok: false, reason: 'no_context'|'redirect'|'parse_error', raw: <string> }
+ */
+export async function generateAnswer({ message, history = [] }, contextChunks = []) {
+  try {
+    // If no context was passed, try to retrieve it automatically w/o filter
+    if (!contextChunks || contextChunks.length === 0) {
+      const { matches, maxScore } = await getRelevantChunks(message, null, TOPK);
+      contextChunks = matches;
+      // if below threshold, we treat as no context (caller can fallback)
+      if (maxScore < RELEVANCE_THRESHOLD) {
+        return { ok: false, reason: "no_context", raw: null };
+      }
+    }
+
+    // Reformulate short follow-up queries using last user message in history
+    if (history && history.length > 0 && message.split(" ").length < 6) {
+      const lastUser = [...history].reverse().find(m => m.role === "user");
+      if (lastUser) message = `${lastUser.text} -> ${message}`;
+    }
+
+    // Determine requested sections / intent
+    const intent = detectIntent(message);
+    const sections = detectSections(message); // e.g., ['symptoms'] or ['message']
+
+    // Try to prefer chunks with metadata.section matching requested sections
+    let preferred = contextChunks.filter(c => c.metadata && sections.some(s => (c.metadata.section || "").toLowerCase().includes(s)));
+    if (preferred.length === 0) {
+      // fallback to top-n by semantic sim
+      preferred = contextChunks.slice(0, Math.min(5, contextChunks.length));
+    } else {
+      preferred = preferred.slice(0, Math.min(6, preferred.length));
+    }
+
+    // Build context text (cleaned)
+    const contextText = preferred.map((c, i) => {
+      const meta = c.metadata || {};
+      const head = meta.disease ? `${meta.disease} (${meta.section || "general"})` : `${meta.section || "general"}`;
+      return `#Context ${i + 1} - ${head}:\n${meta.text || ""}`;
+    }).join("\n\n");
+
+    // Build JSON schema string if structured sections are requested
+    const requestedStructured = sections.some(s => ["symptoms", "treatments", "food", "causes", "when_to_see_doctor", "exercise"].includes(s));
+    let jsonSchema = '{\n';
+    const parts = [];
+    if (sections.includes("symptoms")) parts.push('  "symptoms": ["..."]');
+    if (sections.includes("treatments")) parts.push('  "treatments": ["..."]');
+    if (sections.includes("food")) parts.push('  "food": {"eat": ["..."], "avoid": ["..."]}');
+    if (sections.includes("causes")) parts.push('  "causes": ["..."]');
+    if (sections.includes("when_to_see_doctor")) parts.push('  "when_to_see_doctor": ["..."]');
+    if (sections.includes("exercise")) parts.push('  "exercise": ["..."]');
+    if (sections.includes("message")) parts.push('  "message": "..."');
+
+    jsonSchema += parts.join(',\n') + '\n}';
+
+    // Build prompt
+    const promptLines = [];
+    promptLines.push("You are a careful, conservative medical assistant.");
+    promptLines.push("Follow instructions exactly.");
+    promptLines.push(`User query (intent detection): ${intent}`);
+    promptLines.push("");
+    if (requestedStructured) {
+      promptLines.push("Output FORMAT: Respond ONLY with valid JSON matching this schema (no extra commentary):");
+      promptLines.push(jsonSchema);
+      promptLines.push("");
+      promptLines.push("Rules:");
+      promptLines.push("- Use arrays of short strings for each bullet (each bullet max 1-2 sentences).");
+      promptLines.push("- For 'food', separate 'eat' and 'avoid' lists as shown.");
+      promptLines.push("- If a section is not relevant or not present in the context, return an empty array or empty object for that section.");
+      promptLines.push("- If relying on knowledge outside the context, prefix the item with '[inferred] ' in the string.");
+      promptLines.push("- Be concise and avoid repetition.");
+    } else {
+      promptLines.push("Output FORMAT: Provide a concise conversational answer (no JSON) limited to the user's request.");
+      promptLines.push("- If it's a non-medical casual question (greeting/follow-up), respond naturally.");
+      promptLines.push("- If the user asked a medical question and the context is insufficient, be conservative: say you don't have authoritative info and advise to consult a clinician.");
+    }
+    promptLines.push("");
+    promptLines.push("Conversation history (most recent last):");
+    if (history && Array.isArray(history) && history.length > 0) {
+      const hist = history.slice(-6).map(h => `${h.role === "user" ? "User" : "Assistant"}: ${typeof h.text === "string" ? h.text : JSON.stringify(h.text)}`).join("\n");
+      promptLines.push(hist);
+    } else {
+      promptLines.push(`User: ${message}`);
+    }
+    promptLines.push("");
+    promptLines.push("Context (relevant documents):");
+    promptLines.push(contextText || "No context available.");
+    promptLines.push("");
+    promptLines.push(`Now answer the user query: "${message}"`);
+    promptLines.push("");
+    const prompt = promptLines.join("\n");
+
+    // Ask Ollama medical model
+    const raw = await queryOllama(prompt, OLLAMA_MEDICAL);
+
+    // Quick redirect detection (user-limited model message)
+    const rawLower = (raw || "").toLowerCase();
+    if (/i(?:'|’)?m here as your medical assistant|i (?:can'?t|cannot) help with that|i am only able to provide medical|i cannot provide non-medical|i only (?:specialize|focus)/i.test(rawLower)) {
+      // medical model refused or redirected
+      return { ok: false, reason: "redirect", raw };
+    }
+
+    // Try parse JSON if requestedStructured
+    if (requestedStructured) {
+      try {
+        const start = raw.indexOf("{");
+        const end = raw.lastIndexOf("}") + 1;
+        if (start !== -1 && end !== -1 && end > start) {
+          const substr = raw.slice(start, end);
+          const parsed = JSON.parse(substr);
+          // If all fields empty, treat as no useful content
+          const allEmpty = Object.values(parsed).every(v => {
+            if (Array.isArray(v)) return v.length === 0;
+            if (v && typeof v === "object") return Object.keys(v).length === 0;
+            return v === "" || v === null || v === undefined;
+          });
+          if (allEmpty) {
+            return { ok: false, reason: "empty_structured", raw };
+          }
+          return { ok: true, type: "medical", structured: parsed, message: JSON.stringify(parsed) };
+        } else {
+          // couldn't find JSON, return parse_error
+          return { ok: false, reason: "parse_error", raw };
+        }
+      } catch (e) {
+        return { ok: false, reason: "parse_error", raw };
+      }
+    }
+
+    // Not structured -> return plain text answer
+    return { ok: true, type: "text", message: raw };
+  } catch (err) {
+    console.error("[generateAnswer] error:", err);
+    return { ok: false, reason: "exception", raw: err.message || String(err) };
+  }
+}
+
+/** Fallback generator (general conversational model). 
+ *  Use this when the medical model refuses/redirects or there's no context.
+ *  Returns { ok: true, type: 'fallback', message: string }.
+ */
+export async function generateFallback({ message, history = [] }) {
+  const hist = Array.isArray(history) ? history.slice(-6).map(h => `${h.role === "user" ? "User" : "Assistant"}: ${typeof h.text === "string" ? h.text : JSON.stringify(h.text)}`).join("\n") : "";
+  const prompt = [
+    "You are a friendly, conversational assistant. Answer naturally and helpfully.",
+    "Do NOT give specialized medical advice — just be conversational or give general info.",
+    "",
+    "Conversation history:",
+    hist,
+    "",
+    `User: ${message}`,
+    "",
+    "Answer conversationally in 1-3 short sentences."
+  ].join("\n");
+  try {
+    const raw = await queryOllama(prompt, OLLAMA_FALLBACK);
+    console.log("[Fallback model reply]", raw);
+    return { ok: true, type: "fallback", message: raw || "I'm here to help! Please ask your question again." };
+  } catch (e) {
+    console.error("[generateFallback] error:", e);
+    return { ok: true, type: "fallback", message: "I'm here to help! Please ask your question again." };
+  }
 }

@@ -64,3 +64,12 @@
   display: flex;
   align-items: center;
 }
+.navbar__right {
+  display: flex;
+  align-items: center;
+}
+.navbar__user {
+  color: #555;
+  font-weight: 600;
+  margin-left: 1rem;
+}

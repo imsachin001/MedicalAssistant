@@ -1,8 +1,17 @@
+/* Centered welcome/disclaimer message for empty chat */
+.assistant__welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+}
 .assistant__container {
   display: flex;
   min-height: 100vh;
   background: #f7fafd;
   font-family: 'Inter', sans-serif;
+  margin-left: 295px; /* Prevents chat area from going under sidebar */
 }
 .assistant__main {
   flex: 1;
@@ -105,4 +114,10 @@
 
 .assistant__searchbar:focus {
   background: linear-gradient(90deg, #d9d9ff, #ebe2ff, #ffe0ff);
+}
+
+/* Spinner animation for loading indicator */
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }

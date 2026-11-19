@@ -1,0 +1,2300 @@
+// Smart Medical Chatbot - Context-Aware & Natural Conversation System
+// Built for intelligent medical assistance with natural follow-ups
+
+import { queryOllamaLight, getOllamaStatus } from './lightweight_query.js';
+
+class SmartMedicalBot {
+  constructor() {
+    this.conversationHistory = [];
+    this.contextMemory = {
+      // Real context tracking for dynamic responses
+      symptoms: new Map(), // symptom -> {severity, duration, triggers, location}
+      timeline: [], // chronological symptom progression
+      userResponses: new Map(), // question -> answer mapping
+      medicalHistory: {
+        conditions: new Set(),
+        medications: new Set(),
+        allergies: new Set()
+      },
+      currentFocus: null, // what we're actively investigating
+      concernLevel: 'low', // low, medium, high, critical
+      conversationSummary: '',
+      lastResponse: null,
+      followUpNeeded: false
+    };
+    this.triageFlow = {
+      stage: 'greeting', // greeting, acknowledge, clarify, severity, causes, advice, summary
+      completedStages: new Set(),
+      currentSymptom: null,
+      questionsAsked: new Set(),
+      triageComplete: false
+    };
+    this.conversationFlow = {
+      turnCount: 0,
+      empathyVariations: [
+        "I understand", "I see", "That sounds concerning", "I hear you", 
+        "Thank you for sharing that", "That makes sense", "I appreciate you telling me"
+      ],
+      usedPhrases: new Set()
+    };
+    
+    // User profile for legacy compatibility
+    this.userProfile = {
+      symptoms: new Set(),
+      medical_history: new Set()
+    };
+  }
+
+  // Enhanced message processing with EARLY red-flag detection
+  async processMessage(message) {
+    this.conversationFlow.turnCount++;
+    
+    try {
+      // 🧠 EARLY RED-FLAG DETECTION - Before any processing or follow-ups
+      const emergencyPreScan = this.performEmergencyPreScan(message);
+      if (emergencyPreScan.isEmergency) {
+        // Immediate escalation without follow-ups or questions
+        const emergencyResponse = this.generateEmergencyEscalation(emergencyPreScan);
+        this.storeConversationTurn(message, emergencyResponse, { intent: 'emergency' });
+        return emergencyResponse;
+      }
+      
+      // Analyze message with enhanced context awareness
+      const analysis = this.analyzeMessageWithContext(message);
+      
+      // Check if user wants to start fresh or change topics
+      if (this.shouldResetContext(message, analysis)) {
+        this.resetContext();
+        // Re-analyze after reset
+        const freshAnalysis = this.analyzeMessageWithContext(message);
+        analysis.intent = freshAnalysis.intent;
+        analysis.entities = freshAnalysis.entities;
+      }
+      
+      // Update real context memory
+      this.updateContextMemory(analysis, message);
+      
+      // Generate response using structured triage flow
+      const response = await this.generateTriageResponse(analysis, message);
+      
+      // Store in conversation history with rich context
+      this.storeConversationTurn(message, response, analysis);
+      
+      // Update conversation summary for future reference
+      this.updateConversationSummary(analysis);
+      
+      return response;
+      
+    } catch (error) {
+      console.error('Error in processMessage:', error);
+      return this.getErrorResponse();
+    }
+  }
+
+  // 🧠 COMPREHENSIVE EMERGENCY PRE-SCAN - Early detection before follow-ups
+  // Simplified emergency pre-scan for better performance
+  performEmergencyPreScan(message) {
+    const lowerMessage = message.toLowerCase();
+    
+    // Critical emergency keywords that need immediate 911 response
+    const emergencyKeywords = [
+      'heart attack', 'cardiac arrest', 'crushing chest pain', 'chest pain radiating',
+      'can\'t breathe', 'cannot breathe', 'choking', 'unconscious', 'seizure',
+      'severe bleeding', 'overdose', 'poisoning', 'stroke', 'anaphylaxis',
+      'worst headache ever', 'thunderclap headache', 'face drooping',
+      'speech slurred', 'can\'t feel left', 'can\'t feel right', 'can\'t move left', 'can\'t move right'
+    ];
+
+    // Quick emergency check
+    for (const keyword of emergencyKeywords) {
+      if (lowerMessage.includes(keyword)) {
+        return {
+          isEmergency: true,
+          level: 'life_threatening',
+          reason: `EMERGENCY: "${keyword}" requires immediate medical attention.`,
+          escalationType: 'emergency_keyword',
+          urgencyLevel: 911
+        };
+      }
+    }
+
+    return { isEmergency: false };
+  }
+      'severe dizziness', 'room spinning', 'vertigo severe',
+      'chest pain', 'chest pressure', 'chest tightness',
+      'shortness of breath', 'difficulty breathing'
+    ];
+
+    // Check for DIRECT emergencies (life-threatening alone)
+    for (const symptom of directEmergencySymptoms) {
+      if (lowerMessage.includes(symptom)) {
+        return {
+          isEmergency: true,
+          level: 'life_threatening',
+          reason: `IMMEDIATE EMERGENCY: "${symptom}" is a life-threatening symptom requiring immediate 911 response.`,
+          escalationType: 'direct_emergency',
+          urgencyLevel: 911
+        };
+      }
+    }
+
+    // Check for dangerous COMBINATIONS of symptoms
+    const emergencyCombinations = [
+      {
+        keywords: ['chest pain', 'shortness of breath'],
+        reason: 'CARDIAC EMERGENCY: Chest pain with breathing difficulty',
+        level: 'life_threatening'
+      },
+      {
+        keywords: ['chest pain', 'sweating', 'nausea'],
+        reason: 'CARDIAC EMERGENCY: Classic heart attack symptoms',
+        level: 'life_threatening'
+      },
+      {
+        keywords: ['chest pain', 'dizziness'],
+        reason: 'CARDIAC EMERGENCY: Chest pain with dizziness',
+        level: 'life_threatening'
+      },
+      {
+        keywords: ['severe headache', 'fever', 'neck'],
+        reason: 'MENINGITIS EMERGENCY: Severe headache with fever and neck symptoms',
+        level: 'life_threatening'
+      },
+      {
+        keywords: ['severe headache', 'vision', 'sudden'],
+        reason: 'NEUROLOGICAL EMERGENCY: Severe headache with vision changes',
+        level: 'life_threatening'
+      },
+      {
+        keywords: ['severe abdominal pain', 'vomiting blood'],
+        reason: 'INTERNAL BLEEDING: Severe abdominal pain with blood',
+        level: 'life_threatening'
+      },
+      {
+        keywords: ['high fever', 'confusion', 'rash'],
+        reason: 'SEPSIS EMERGENCY: High fever with confusion and rash',
+        level: 'life_threatening'
+      },
+      {
+        keywords: ['severe vomiting', 'blood'],
+        reason: 'BLEEDING EMERGENCY: Vomiting blood',
+        level: 'life_threatening'
+      }
+    ];
+
+    // Check for emergency combinations
+    for (const combo of emergencyCombinations) {
+      const hasAll = combo.keywords.every(keyword => lowerMessage.includes(keyword));
+      if (hasAll) {
+        return {
+          isEmergency: true,
+          level: combo.level,
+          reason: combo.reason,
+          escalationType: 'combination_emergency',
+          urgencyLevel: 911
+        };
+      }
+    }
+
+    // Check for accumulated combination symptoms from context
+    const accumulatedCombination = this.checkAccumulatedCombinationSymptoms(lowerMessage, combinationSymptoms);
+    if (accumulatedCombination.isEmergency) {
+      return accumulatedCombination;
+    }
+
+    // Pattern-based emergency detection
+    const emergencyPatterns = [
+      {
+        pattern: /pain.*10.*out.*10|10.*10.*pain|worst.*pain.*life/,
+        level: 'life_threatening',
+        reason: 'EXTREME PAIN: 10/10 pain level reported'
+      },
+      {
+        pattern: /can't.*stand|cannot.*stand|collapse|collapsing/,
+        level: 'life_threatening', 
+        reason: 'PHYSICAL COLLAPSE: Unable to stand or collapsing'
+      },
+      {
+        pattern: /emergency|911|ambulance|help.*dying/,
+        level: 'life_threatening',
+        reason: 'EMERGENCY REQUEST: Explicit request for emergency help'
+      }
+    ];
+
+    for (const emergency of emergencyPatterns) {
+      if (emergency.pattern.test(lowerMessage)) {
+        return {
+          isEmergency: true,
+          level: emergency.level,
+          reason: emergency.reason,
+          escalationType: 'pattern_emergency',
+          urgencyLevel: 911
+        };
+      }
+    }
+
+    return { isEmergency: false };
+  }
+
+  // Check for accumulated combination symptoms across conversation
+  checkAccumulatedCombinationSymptoms(currentMessage, combinationSymptoms) {
+    // Get all conversation messages
+    const allMessages = [...this.contextMemory.timeline.map(t => t.message), currentMessage].join(' ').toLowerCase();
+    
+    // Track which combination symptoms are present
+    const foundSymptoms = [];
+    
+    for (const symptom of combinationSymptoms) {
+      if (allMessages.includes(symptom.toLowerCase())) {
+        foundSymptoms.push(symptom);
+      }
+    }
+    
+    // Check for specific dangerous combinations across messages
+    const dangerousCombinations = [
+      {
+        check: () => /severe headache/.test(allMessages) && (/fever/.test(allMessages) || /neck/.test(allMessages)),
+        reason: 'MENINGITIS RISK: Severe headache with fever or neck symptoms',
+        level: 'life_threatening'
+      },
+      {
+        check: () => /chest pain/.test(allMessages) && (/shortness of breath|difficulty breathing/.test(allMessages)),
+        reason: 'CARDIAC EMERGENCY: Chest pain with breathing difficulty',
+        level: 'life_threatening'
+      },
+      {
+        check: () => /chest pain/.test(allMessages) && (/sweating|nausea|dizziness/.test(allMessages)),
+        reason: 'CARDIAC EMERGENCY: Chest pain with associated symptoms',
+        level: 'life_threatening'
+      },
+      {
+        check: () => /severe abdominal pain/.test(allMessages) && (/vomiting|blood/.test(allMessages)),
+        reason: 'ABDOMINAL EMERGENCY: Severe pain with vomiting or bleeding',
+        level: 'life_threatening'
+      },
+      {
+        check: () => /high fever/.test(allMessages) && (/confusion|rash|severe/.test(allMessages)),
+        reason: 'INFECTION EMERGENCY: High fever with serious symptoms',
+        level: 'life_threatening'
+      },
+      {
+        check: () => foundSymptoms.length >= 2 && (/severe|high|blood/.test(allMessages)),
+        reason: 'MULTIPLE SEVERE SYMPTOMS: Concerning combination requiring urgent evaluation',
+        level: 'severe_urgent'
+      }
+    ];
+    
+    // Check each dangerous combination
+    for (const combo of dangerousCombinations) {
+      if (combo.check()) {
+        return {
+          isEmergency: true,
+          level: combo.level,
+          reason: combo.reason,
+          escalationType: 'accumulated_combination',
+          urgencyLevel: combo.level === 'life_threatening' ? 911 : 'ER'
+        };
+      }
+    }
+    
+    return { isEmergency: false };
+  }
+
+  // Enhanced message analysis with real context awareness
+  analyzeMessageWithContext(message) {
+    const lower = message.toLowerCase();
+    
+    const analysis = {
+      intent: this.detectIntent(lower),
+      entities: this.extractEntitiesWithContext(lower),
+      sentiment: this.analyzeSentiment(lower),
+      urgency: this.assessUrgency(lower),
+      isFollowUp: this.isContextualFollowUp(lower),
+      needsDisclaimer: this.needsDisclaimer(lower),
+      answersToQuestions: this.identifyAnswersToQuestions(message),
+      newInformation: this.identifyNewInformation(lower),
+      contradictions: this.checkForContradictions(lower)
+    };
+
+    return analysis;
+  }
+
+  // Real context memory updates
+  updateContextMemory(analysis, message) {
+    // Track new symptoms with details
+    analysis.entities.symptoms.forEach(symptom => {
+      if (!this.contextMemory.symptoms.has(symptom)) {
+        this.contextMemory.symptoms.set(symptom, {
+          firstMentioned: this.conversationFlow.turnCount,
+          severity: analysis.entities.severity,
+          duration: this.extractDuration(message),
+          triggers: this.extractTriggers(message),
+          location: this.extractLocation(message),
+          characteristics: this.extractCharacteristics(message)
+        });
+      } else {
+        // Update existing symptom with new details
+        const existing = this.contextMemory.symptoms.get(symptom);
+        if (analysis.entities.severity) existing.severity = analysis.entities.severity;
+        if (this.extractDuration(message)) existing.duration = this.extractDuration(message);
+        if (this.extractTriggers(message).length > 0) {
+          existing.triggers = [...(existing.triggers || []), ...this.extractTriggers(message)];
+        }
+        // Update characteristics
+        const newCharacteristics = this.extractCharacteristics(message);
+        if (newCharacteristics.length > 0) {
+          existing.characteristics = [...(existing.characteristics || []), ...newCharacteristics];
+          // Remove duplicates
+          existing.characteristics = [...new Set(existing.characteristics)];
+        }
+      }
+    });
+
+    // Apply new characteristics to existing symptoms if no new symptoms mentioned
+    if (analysis.entities.symptoms.length === 0) {
+      const newCharacteristics = this.extractCharacteristics(message);
+      const newDuration = this.extractDuration(message);
+      const newTriggers = this.extractTriggers(message);
+      
+      if (newCharacteristics.length > 0 || newDuration || newTriggers.length > 0) {
+        // Apply to the most recently mentioned symptom
+        const existingSymptoms = Array.from(this.contextMemory.symptoms.entries());
+        if (existingSymptoms.length > 0) {
+          const [recentSymptom, recentData] = existingSymptoms.reduce((latest, current) => 
+            current[1].firstMentioned > latest[1].firstMentioned ? current : latest
+          );
+          
+          if (newCharacteristics.length > 0) {
+            recentData.characteristics = [...(recentData.characteristics || []), ...newCharacteristics];
+            recentData.characteristics = [...new Set(recentData.characteristics)]; // Remove duplicates
+          }
+          if (newDuration) recentData.duration = newDuration;
+          if (newTriggers.length > 0) {
+            recentData.triggers = [...(recentData.triggers || []), ...newTriggers];
+          }
+        }
+      }
+    }
+
+    // Track timeline progression
+    if (analysis.entities.symptoms.length > 0 || analysis.entities.timeframes.length > 0) {
+      this.contextMemory.timeline.push({
+        turn: this.conversationFlow.turnCount,
+        symptoms: analysis.entities.symptoms,
+        timeframes: analysis.entities.timeframes,
+        severity: analysis.entities.severity,
+        message: message
+      });
+    }
+
+    // Update concern level based on cumulative information
+    this.updateConcernLevel(analysis);
+    
+    // Set current focus
+    if (analysis.entities.symptoms.length > 0) {
+      this.contextMemory.currentFocus = analysis.entities.symptoms[0];
+    }
+  }
+
+  // Enhanced entity extraction with context
+  extractEntitiesWithContext(message) {
+    const entities = {
+      symptoms: [],
+      bodyParts: [],
+      timeframes: [],
+      severity: null,
+      triggers: [],
+      characteristics: []
+    };
+
+    // Enhanced symptom patterns with context
+    const symptomPatterns = [
+      { pattern: /\b(headache|migraine|head pain|head ache|head hurts|head hurt)\b/g, symptom: 'headache' },
+      { pattern: /\b(chest pain|heart pain|cardiac|chest ache|chest hurts)\b/g, symptom: 'chest pain' },
+      { pattern: /\b(shortness of breath|breathing difficulty|can't breathe|breathless|winded)\b/g, symptom: 'shortness of breath' },
+      { pattern: /\b(nausea|nauseous|sick|queasy|throw up|vomit)\b/g, symptom: 'nausea' },
+      { pattern: /\b(dizziness|dizzy|lightheaded|spinning|vertigo)\b/g, symptom: 'dizziness' },
+      { pattern: /\b(fatigue|tired|exhausted|weakness|energy|drained)\b/g, symptom: 'fatigue' },
+      { pattern: /\b(fever|temperature|hot|chills|sweats)\b/g, symptom: 'fever' },
+      { pattern: /\b(cough|coughing|throat|hack)\b/g, symptom: 'cough' },
+      { pattern: /\b(back pain|back ache|back hurts|backache)\b/g, symptom: 'back pain' },
+      { pattern: /\b(stomach pain|stomach ache|stomach hurts|belly pain|abdominal pain)\b/g, symptom: 'stomach pain' },
+      { pattern: /\b(pain|ache|hurt|sore|tender|throb|sharp|dull|burning)\b/g, symptom: 'pain' }
+    ];
+
+    symptomPatterns.forEach(({ pattern, symptom }) => {
+      const matches = message.match(pattern);
+      if (matches && !entities.symptoms.includes(symptom)) {
+        entities.symptoms.push(symptom);
+      }
+    });
+
+    // Remove generic "pain" if we have specific pain types
+    const specificPainTypes = ['headache', 'chest pain', 'back pain', 'stomach pain'];
+    const hasSpecificPain = entities.symptoms.some(s => specificPainTypes.includes(s));
+    if (hasSpecificPain && entities.symptoms.includes('pain')) {
+      entities.symptoms = entities.symptoms.filter(s => s !== 'pain');
+    }
+
+    // Enhanced severity detection
+    if (/\b(severe|extreme|unbearable|worst|terrible|excruciating|intense)\b/.test(message)) {
+      entities.severity = 'severe';
+    } else if (/\b(moderate|significant|noticeable|concerning|bad)\b/.test(message)) {
+      entities.severity = 'moderate';
+    } else if (/\b(mild|slight|little|minor|small)\b/.test(message)) {
+      entities.severity = 'mild';
+    }
+
+    // Extract characteristics
+    const characteristics = [];
+    if (/\b(sharp|stabbing|piercing)\b/.test(message)) characteristics.push('sharp');
+    if (/\b(dull|aching|throbbing)\b/.test(message)) characteristics.push('dull');
+    if (/\b(burning|stinging)\b/.test(message)) characteristics.push('burning');
+    if (/\b(constant|continuous|all the time)\b/.test(message)) characteristics.push('constant');
+    if (/\b(comes and goes|intermittent|on and off)\b/.test(message)) characteristics.push('intermittent');
+    entities.characteristics = characteristics;
+
+    return entities;
+  }
+
+  // Extract duration information
+  extractDuration(message) {
+    const durationPatterns = [
+      { pattern: /(\d+)\s*(minutes?|mins?)/i, multiplier: 1 },
+      { pattern: /(\d+)\s*(hours?|hrs?)/i, multiplier: 60 },
+      { pattern: /(\d+)\s*(days?)/i, multiplier: 1440 },
+      { pattern: /(\d+)\s*(weeks?)/i, multiplier: 10080 },
+      { pattern: /(\d+)\s*(months?)/i, multiplier: 43200 }
+    ];
+
+    for (const { pattern, multiplier } of durationPatterns) {
+      const match = message.match(pattern);
+      if (match) {
+        return {
+          value: parseInt(match[1]),
+          unit: match[2],
+          minutes: parseInt(match[1]) * multiplier,
+          text: match[0]
+        };
+      }
+    }
+
+    // Text-based durations
+    if (/\b(just now|right now|currently)\b/i.test(message)) return { text: 'currently', minutes: 0 };
+    if (/\b(today|this morning|this afternoon)\b/i.test(message)) return { text: 'today', minutes: 720 };
+    if (/\b(yesterday)\b/i.test(message)) return { text: 'yesterday', minutes: 1440 };
+    if (/\b(this week)\b/i.test(message)) return { text: 'this week', minutes: 5040 };
+
+    return null;
+  }
+
+  // Extract triggers
+  extractTriggers(message) {
+    const triggers = [];
+    const triggerPatterns = [
+      { pattern: /\b(when I (eat|eating|drink|drinking))\b/g, trigger: 'eating/drinking' },
+      { pattern: /\b(when I (move|moving|walk|walking|exercise))\b/g, trigger: 'movement' },
+      { pattern: /\b(when I (sleep|sleeping|lie down|lying down))\b/g, trigger: 'lying down' },
+      { pattern: /\b(when I (stress|stressed|anxious|worry))\b/g, trigger: 'stress' },
+      { pattern: /\b(when I (work|working|computer|screen))\b/g, trigger: 'work/computer' },
+      { pattern: /\b(in the (morning|evening|night))\b/g, trigger: 'time of day' }
+    ];
+
+    triggerPatterns.forEach(({ pattern, trigger }) => {
+      if (pattern.test(message) && !triggers.includes(trigger)) {
+        triggers.push(trigger);
+      }
+    });
+
+    return triggers;
+  }
+
+  // Extract location/body parts
+  extractLocation(message) {
+    const locations = [];
+    const locationPatterns = [
+      /\b(left|right)\s+(side|temple|arm|leg|chest|back)\b/g,
+      /\b(upper|lower)\s+(back|chest|abdomen|stomach)\b/g,
+      /\b(front|back)\s+of\s+(head|chest|neck)\b/g
+    ];
+
+    locationPatterns.forEach(pattern => {
+      const matches = message.match(pattern);
+      if (matches) locations.push(...matches);
+    });
+
+    return locations;
+  }
+
+  // Extract characteristics
+  extractCharacteristics(message) {
+    const characteristics = [];
+    
+    // Pain characteristics
+    if (/\b(sharp|stabbing|piercing|knife-like)\b/.test(message)) characteristics.push('sharp');
+    if (/\b(dull|aching|throbbing|pounding)\b/.test(message)) characteristics.push('dull');
+    if (/\b(burning|stinging|hot)\b/.test(message)) characteristics.push('burning');
+    
+    // Cough characteristics
+    if (/\b(dry|non-productive|tickling|scratchy)\b/.test(message)) characteristics.push('dry');
+    if (/\b(wet|productive|phlegmy|mucus|sputum)\b/.test(message)) characteristics.push('productive');
+    
+    // Timing characteristics
+    if (/\b(constant|continuous|all the time|non-stop)\b/.test(message)) characteristics.push('constant');
+    if (/\b(comes and goes|intermittent|on and off|fluctuating)\b/.test(message)) characteristics.push('intermittent');
+    if (/\b(night|nighttime|at night|evening|bedtime)\b/.test(message)) characteristics.push('nocturnal');
+    if (/\b(morning|daytime|during day)\b/.test(message)) characteristics.push('daytime');
+    
+    return characteristics;
+  }
+
+  // Intelligent message analysis
+  analyzeMessage(message) {
+    const lower = message.toLowerCase();
+    
+    const analysis = {
+      intent: this.detectIntent(lower),
+      entities: this.extractEntities(lower),
+      sentiment: this.analyzeSentiment(lower),
+      urgency: this.assessUrgency(lower),
+      isFollowUp: this.isFollowUp(lower),
+      needsDisclaimer: this.needsDisclaimer(lower)
+    };
+
+    // Debug: Log the analysis structure
+    console.log('Analysis entities:', analysis.entities);
+
+    return analysis;
+  }
+
+  // Enhanced intent detection
+  detectIntent(message) {
+    // Emergency scenarios
+    if (this.isEmergency(message)) return 'emergency';
+    
+    // Greetings
+    if (/^(hi|hello|hey|good morning|good afternoon|good evening)$/i.test(message.trim())) {
+      return 'greeting';
+    }
+    
+    // Symptom reporting
+    if (/\b(feel|feeling|have|having|experiencing|symptoms?|pain|ache|hurt|hurts|aching|painful)\b/.test(message)) {
+      return 'symptom_report';
+    }
+    
+    // Information seeking
+    if (/\b(what|how|why|when|where|can you|tell me|explain|about)\b/.test(message)) {
+      return 'information_request';
+    }
+    
+    // Treatment/advice seeking
+    if (/\b(treat|treatment|help|advice|recommend|should i|what do)\b/.test(message)) {
+      return 'advice_request';
+    }
+    
+    // Follow-up responses
+    if (this.contextMemory.followUpNeeded) {
+      return 'follow_up_response';
+    }
+    
+    return 'general_inquiry';
+  }
+
+  // Extract medical entities
+  extractEntities(message) {
+    const entities = {
+      symptoms: [],
+      bodyParts: [],
+      timeframes: [],
+      severity: null,
+      triggers: []
+    };
+
+    // Symptoms
+    const symptomPatterns = [
+      /\b(headache|migraine|head pain)\b/g,
+      /\b(chest pain|heart pain|cardiac)\b/g,
+      /\b(shortness of breath|breathing difficulty|can't breathe)\b/g,
+      /\b(fever|temperature|chills|hot|cold)\b/g,
+      /\b(nausea|vomiting|sick|throw up)\b/g,
+      /\b(dizziness|dizzy|lightheaded|spinning)\b/g,
+      /\b(fatigue|tired|exhausted|weakness)\b/g,
+      /\b(cough|coughing|throat)\b/g,
+      /\b(pain|ache|hurt|sore|tender)\b/g
+    ];
+
+    symptomPatterns.forEach(pattern => {
+      const matches = message.match(pattern);
+      if (matches) entities.symptoms.push(...matches);
+    });
+
+    // Body parts
+    const bodyParts = /\b(head|chest|heart|lungs|stomach|back|neck|shoulder|arm|leg|throat|eyes|ears)\b/g;
+    const bodyMatches = message.match(bodyParts);
+    if (bodyMatches) entities.bodyParts.push(...bodyMatches);
+
+    // Timeframes
+    const timePatterns = /\b(since|for|past|last|yesterday|today|morning|night|hours?|days?|weeks?|months?)\b/g;
+    const timeMatches = message.match(timePatterns);
+    if (timeMatches) entities.timeframes.push(...timeMatches);
+
+    // Severity indicators
+    if (/\b(severe|extreme|unbearable|worst|terrible)\b/.test(message)) {
+      entities.severity = 'severe';
+    } else if (/\b(moderate|noticeable|concerning)\b/.test(message)) {
+      entities.severity = 'moderate';
+    } else if (/\b(mild|slight|little)\b/.test(message)) {
+      entities.severity = 'mild';
+    }
+
+    return entities;
+  }
+
+  // Check for emergency situations
+  isEmergency(message) {
+    const emergencyPatterns = [
+      /\b(can't breathe|cannot breathe|choking|suffocating)\b/,
+      /\b(chest pain|heart attack|cardiac|crushing pain)\b/,
+      /\b(unconscious|passed out|fainting|collapsed)\b/,
+      /\b(severe bleeding|heavy bleeding|blood loss)\b/,
+      /\b(overdose|poisoning|toxic)\b/,
+      /\b(stroke|seizure|convulsions)\b/,
+      /\b(emergency|911|help|dying)\b/
+    ];
+
+    return emergencyPatterns.some(pattern => pattern.test(message));
+  }
+
+  // Assess message urgency
+  assessUrgency(message) {
+    if (this.isEmergency(message)) return 'critical';
+    
+    const highUrgency = /\b(severe|intense|unbearable|worsening|getting worse|can't sleep|can't eat)\b/.test(message);
+    const mediumUrgency = /\b(concerned|worried|persistent|ongoing|bothering)\b/.test(message);
+    
+    if (highUrgency) return 'high';
+    if (mediumUrgency) return 'medium';
+    return 'low';
+  }
+
+  // Check if message is a follow-up
+  isFollowUp(message) {
+    // Check conversation context
+    if (this.contextMemory.followUpNeeded) return true;
+    
+    // Check for continuation patterns
+    const followUpPatterns = /\b(yes|no|maybe|sometimes|it|that|this|also|and|but|however)\b/;
+    return followUpPatterns.test(message) && this.conversationFlow.turnCount > 1;
+  }
+
+  // Determine if response needs medical disclaimer
+  needsDisclaimer(message) {
+    const medicalPatterns = /\b(treatment|medication|diagnosis|disease|condition|symptoms|pain|medical)\b/;
+    return medicalPatterns.test(message);
+  }
+
+  // Analyze sentiment
+  analyzeSentiment(message) {
+    const worried = /\b(worried|scared|anxious|concerned|afraid|panic)\b/.test(message);
+    const frustrated = /\b(frustrated|annoyed|tired of|fed up)\b/.test(message);
+    const hopeful = /\b(better|improving|hoping|optimistic)\b/.test(message);
+    
+    if (worried) return 'worried';
+    if (frustrated) return 'frustrated';
+    if (hopeful) return 'hopeful';
+    return 'neutral';
+  }
+
+  // Update conversation context
+  updateContext(analysis) {
+    // Safely update user profile
+    if (analysis && analysis.entities && analysis.entities.symptoms) {
+      analysis.entities.symptoms.forEach(symptom => {
+        this.userProfile.symptoms.add(symptom);
+      });
+    }
+
+    // Update context memory
+    if (analysis && analysis.intent === 'symptom_report') {
+      this.contextMemory.currentTopic = 'symptoms';
+      if (analysis.entities && analysis.entities.severity) {
+        this.contextMemory.severity = analysis.entities.severity;
+      }
+      this.conversationFlow.stage = 'symptom_gathering';
+    }
+
+    // Set follow-up needs
+    this.contextMemory.followUpNeeded = this.shouldFollowUp(analysis);
+  }
+
+  // Determine if follow-up is needed
+  shouldFollowUp(analysis) {
+    // Always follow up on symptoms
+    if (analysis.intent === 'symptom_report') return true;
+    
+    // Follow up on vague responses
+    if (analysis.entities.symptoms.length > 0 && !analysis.entities.severity) return true;
+    
+    // Follow up on concerning symptoms
+    if (analysis.urgency === 'high') return true;
+    
+    return false;
+  }
+
+  // Structured triage response generation - INTELLIGENT & ADAPTIVE
+  async generateTriageResponse(analysis, originalMessage) {
+    try {
+      // Handle emergencies immediately
+      if (analysis.intent === 'emergency') {
+        return this.getEmergencyResponse();
+      }
+
+      // Handle greetings naturally
+      if (analysis.intent === 'greeting') {
+        return this.getGreetingResponse();
+      }
+
+      // INTELLIGENT CONVERSATION FLOW - No fixed stages
+      return await this.generateIntelligentResponse(analysis, originalMessage);
+
+    } catch (error) {
+      console.error('Error generating triage response:', error);
+      return this.getSmartFallbackResponse(analysis, originalMessage);
+    }
+  }
+
+  // MAIN INTELLIGENT RESPONSE SYSTEM
+  async generateIntelligentResponse(analysis, originalMessage) {
+    const symptoms = Array.from(this.contextMemory.symptoms.keys());
+    const conversationContext = this.buildConversationContext();
+    
+    // Check if we need emergency escalation based on symptom patterns
+    const emergencySignal = this.checkEmergencyPatterns(symptoms, this.contextMemory, originalMessage);
+    if (emergencySignal.isEmergency) {
+      return this.generateEmergencyEscalation(emergencySignal);
+    }
+    
+    // Generate contextual AI response based on current conversation state
+    const prompt = this.buildContextualPrompt(analysis, conversationContext, originalMessage);
+    
+    try {
+      const aiResponse = await queryOllamaLight(prompt);
+      
+      return {
+        ok: true,
+        type: "adaptive_ai",
+        message: aiResponse,
+        stage: this.determineConversationStage(),
+        context_aware: true,
+        follow_up_needed: this.shouldFollowUp(analysis),
+        emergency_level: emergencySignal.level
+      };
+    } catch (error) {
+      console.error('AI response error:', error);
+      return this.generateFallbackResponse(analysis, originalMessage);
+    }
+  }
+
+  // Enhanced red-flag symptom detection system (DIRECT vs COMBINATION)
+  checkEmergencyPatterns(symptoms, contextMemory, currentMessage = '') {
+    // DIRECT EMERGENCY symptoms (life-threatening ALONE)
+    const directEmergencySymptoms = [
+      'crushing chest pain', 'chest pain radiating', 'chest pain down arm',
+      'heart attack', 'cardiac arrest', 'worst headache ever', 'thunderclap headache',
+      'sudden severe headache', 'cannot breathe', 'can\'t breathe', 'choking',
+      'unconscious', 'loss of consciousness', 'seizure', 'convulsions',
+      'severe bleeding', 'heavy bleeding', 'blood loss', 'hemorrhaging',
+      'stroke', 'face drooping', 'speech slurred', 'overdose', 'poisoning',
+      'severe allergic reaction', 'anaphylaxis', 'throat swelling'
+    ];
+
+    // COMBINATION-ONLY symptoms (dangerous only when combined)
+    const combinationOnlySymptoms = [
+      'severe headache', 'severe abdominal pain', 'severe stomach pain',
+      'chest pain', 'severe vomiting', 'high fever', 'severe dizziness',
+      'severe back pain', 'severe neck pain', 'shortness of breath'
+    ];
+
+    // Check for DIRECT emergencies first
+    const allText = [...symptoms, currentMessage].join(' ').toLowerCase();
+    
+    for (const directSymptom of directEmergencySymptoms) {
+      if (allText.includes(directSymptom.toLowerCase())) {
+        return {
+          isEmergency: true,
+          level: 'critical',
+          reason: `DIRECT EMERGENCY: "${directSymptom}" is immediately life-threatening.`,
+          symptoms: symptoms,
+          escalationType: 'direct_emergency_symptom'
+        };
+      }
+    }
+
+    // Check for dangerous COMBINATIONS of symptoms
+    const dangerousCombinations = [
+      {
+        pattern: ['chest pain', 'shortness of breath'],
+        level: 'critical',
+        reason: 'CARDIAC EMERGENCY: Chest pain with breathing difficulty'
+      },
+      {
+        pattern: ['chest pain', 'sweating'],
+        level: 'critical', 
+        reason: 'CARDIAC EMERGENCY: Chest pain with sweating'
+      },
+      {
+        pattern: ['chest pain', 'nausea'],
+        level: 'critical',
+        reason: 'CARDIAC EMERGENCY: Chest pain with nausea'
+      },
+      {
+        pattern: ['chest pain', 'dizziness'],
+        level: 'critical',
+        reason: 'CARDIAC EMERGENCY: Chest pain with dizziness'
+      },
+      {
+        pattern: ['severe headache', 'fever'],
+        level: 'critical',
+        reason: 'MENINGITIS EMERGENCY: Severe headache with fever'
+      },
+      {
+        pattern: ['severe headache', 'neck'],
+        level: 'critical',
+        reason: 'MENINGITIS EMERGENCY: Severe headache with neck symptoms'
+      },
+      {
+        pattern: ['severe abdominal pain', 'vomiting'],
+        level: 'high',
+        reason: 'ABDOMINAL EMERGENCY: Severe pain with vomiting'
+      },
+      {
+        pattern: ['severe abdominal pain', 'blood'],
+        level: 'critical',
+        reason: 'BLEEDING EMERGENCY: Severe abdominal pain with bleeding'
+      },
+      {
+        pattern: ['high fever', 'confusion'],
+        level: 'high',
+        reason: 'INFECTION EMERGENCY: High fever with confusion'
+      },
+      {
+        pattern: ['high fever', 'rash'],
+        level: 'high',
+        reason: 'INFECTION EMERGENCY: High fever with rash'
+      }
+    ];
+
+    // Check combinations across current message and stored symptoms
+    for (const combo of dangerousCombinations) {
+      const hasPattern = combo.pattern.every(keyword => 
+        allText.includes(keyword.toLowerCase()) ||
+        this.checkContextForKeyword(keyword, contextMemory)
+      );
+      
+      if (hasPattern) {
+        return {
+          isEmergency: true,
+          level: combo.level,
+          reason: combo.reason,
+          symptoms: symptoms,
+          escalationType: 'dangerous_combination'
+        };
+      }
+    }
+
+    // Count isolated combination symptoms (should NOT trigger alone)
+    const foundCombinationSymptoms = [];
+    for (const symptom of combinationOnlySymptoms) {
+      if (allText.includes(symptom.toLowerCase())) {
+        foundCombinationSymptoms.push(symptom);
+      }
+    }
+
+    // MODERATE escalation only for multiple severe symptoms without dangerous combinations
+    if (foundCombinationSymptoms.length >= 2) {
+      return {
+        isEmergency: true,
+        level: 'medium',
+        reason: `Multiple concerning symptoms detected: ${foundCombinationSymptoms.join(', ')}. Medical consultation recommended.`,
+        symptoms: symptoms,
+        escalationType: 'multiple_concerning_symptoms'
+      };
+    }
+
+    return { 
+      isEmergency: false, 
+      level: 'low'
+    };
+  }
+
+  // Check context memory for red-flag indicators
+  checkContextForRedFlags(contextMemory, foundRedFlags) {
+    // Check severity levels stored in symptom data
+    for (const [symptom, data] of contextMemory.symptoms.entries()) {
+      if (data.severity === 'severe' || data.severity === 'extreme') {
+        foundRedFlags.high.push(`severe ${symptom}`);
+      }
+      if (data.characteristics && data.characteristics.includes('worsening')) {
+        foundRedFlags.moderate.push(`worsening ${symptom}`);
+      }
+    }
+
+    // Check conversation summary for concerning phrases
+    const summary = contextMemory.conversationSummary?.toLowerCase() || '';
+    if (summary.includes('getting worse') || summary.includes('worsening')) {
+      foundRedFlags.moderate.push('symptoms worsening');
+    }
+    if (summary.includes('severe') || summary.includes('unbearable')) {
+      foundRedFlags.high.push('severe symptoms reported');
+    }
+  }
+
+  // Build conversation context for AI prompt
+  buildConversationContext() {
+    const symptoms = Array.from(this.contextMemory.symptoms.entries());
+    const timeline = this.contextMemory.timeline;
+    
+    let context = "Patient conversation context:\n";
+    
+    if (symptoms.length > 0) {
+      context += "Current symptoms:\n";
+      symptoms.forEach(([symptom, data]) => {
+        context += `- ${symptom}`;
+        if (data.severity) context += ` (${data.severity})`;
+        if (data.duration) context += ` for ${data.duration.text}`;
+        if (data.characteristics?.length > 0) context += ` - ${data.characteristics.join(', ')}`;
+        context += "\n";
+      });
+    }
+    
+    if (timeline.length > 0) {
+      context += "\nConversation progression:\n";
+      timeline.slice(-3).forEach((entry, i) => {
+        context += `${i + 1}. ${entry.message}\n`;
+      });
+    }
+    
+    return context;
+  }
+
+  // Build contextual AI prompt
+  buildContextualPrompt(analysis, conversationContext, originalMessage) {
+    const symptoms = Array.from(this.contextMemory.symptoms.entries());
+    const hasMultipleSymptoms = symptoms.length > 1;
+    const recentSymptoms = analysis.entities.symptoms;
+    
+    // Detect if user is indicating they're done providing information
+    const isDoneProviding = /\b(no other symptoms?|that'?s it|nothing else|no more|that'?s all)\b/i.test(originalMessage);
+    
+    // Detect if user is asking for suggestions/management advice
+    const isAskingForSuggestions = /\b(suggestions?|manage|management|help|what should i do|advice|treatment|what can i do)\b/i.test(originalMessage);
+    
+    // Build detailed symptom context
+    let symptomDetails = "";
+    if (symptoms.length > 0) {
+      symptomDetails = "\\nKnown symptom details:\\n";
+      symptoms.forEach(([symptom, data]) => {
+        symptomDetails += `- ${symptom}`;
+        if (data.characteristics?.length > 0) symptomDetails += ` (${data.characteristics.join(', ')})`;
+        if (data.duration) symptomDetails += ` for ${data.duration.text}`;
+        if (data.triggers?.length > 0) symptomDetails += ` triggered by ${data.triggers.join(', ')}`;
+        symptomDetails += "\\n";
+      });
+    }
+    
+    let prompt = `You are a medical AI assistant having a natural conversation with a patient. 
+
+${conversationContext}${symptomDetails}
+
+Recent patient message: "${originalMessage}"
+
+Instructions:
+1. Respond naturally and conversationally (NO template responses)
+2. DON'T ask about details you already know (check symptom details above)
+3. Keep responses concise but caring (3-4 sentences max)
+4. Build on what you already know - don't repeat questions
+
+${isDoneProviding ? 
+  `IMPORTANT: Patient indicates they have no other symptoms. Provide a structured summary:
+  - List their symptoms clearly
+  - Provide possible causes in bullet points
+  - Give brief recommendations
+  
+  Format like:
+  "Based on your symptoms: [list symptoms]. Possible causes include:
+  • [cause 1]
+  • [cause 2]  
+  • [cause 3]
+  Recommendations: [brief advice]"` : 
+  isAskingForSuggestions ?
+  `IMPORTANT: Patient is asking for management suggestions. Based on their known symptoms (${symptoms.map(s => s[0]).join(', ')}), provide:
+  - Specific management suggestions for their symptoms
+  - When to seek medical care
+  - What to monitor
+  
+  Don't ask more questions - give helpful advice based on what you know.` :
+  'Ask relevant follow-up questions only about missing information.'
+}
+
+Response should be natural, not robotic. Respond as a knowledgeable medical assistant would.`;
+
+    return prompt;
+  }
+
+  // Check context for keywords
+  checkContextForKeyword(keyword, contextMemory) {
+    const timeline = contextMemory.timeline;
+    return timeline.some(entry => 
+      entry.message.toLowerCase().includes(keyword.toLowerCase())
+    );
+  }
+
+  // Generate emergency escalation
+  generateEmergencyEscalation(emergencySignal) {
+    const { level, reason, escalationType, redFlags, urgencyLevel } = emergencySignal;
+    
+    let message, urgency, advice;
+    
+    switch (level) {
+      case 'life_threatening':
+        message = `🚨 **MEDICAL EMERGENCY - IMMEDIATE ACTION REQUIRED** 🚨\n\n${reason}\n\n`;
+        urgency = "**🚨 CALL 911 IMMEDIATELY OR GO TO THE EMERGENCY ROOM NOW 🚨**";
+        advice = "These symptoms could indicate a life-threatening medical emergency. Do not wait, do not drive yourself - get emergency medical help immediately.";
+        break;
+        
+      case 'severe_urgent':
+        message = `🆘 **SERIOUS MEDICAL CONDITION - EMERGENCY CARE NEEDED** 🆘\n\n${reason}\n\n`;
+        urgency = "**Go to the emergency room today - do not delay.**";
+        advice = "These symptoms indicate a serious medical condition that requires emergency room evaluation within hours, not days.";
+        break;
+        
+      case 'critical':
+        message = `🚨 **URGENT MEDICAL ATTENTION REQUIRED** 🚨\n\n${reason}\n\n`;
+        urgency = "**Call 911 or go to the emergency room immediately.**";
+        advice = "Do not delay - these symptoms require immediate professional medical evaluation.";
+        break;
+        
+      case 'high':
+        message = `⚠️ **CONCERNING SYMPTOMS DETECTED** ⚠️\n\n${reason}\n\n`;
+        if (escalationType === 'multiple_high_symptoms') {
+          urgency = "**Please see a doctor or visit urgent care today.**";
+          advice = "The combination of symptoms you're experiencing needs prompt medical evaluation.";
+        } else {
+          urgency = "**Seek medical attention promptly.**";
+          advice = "It's important to have these symptoms evaluated by a healthcare professional soon.";
+        }
+        break;
+        
+      case 'medium':
+        message = `⚡ **MEDICAL CONSULTATION RECOMMENDED** ⚡\n\n${reason}\n\n`;
+        urgency = "**Consider scheduling a doctor's appointment within the next day or two.**";
+        advice = "While not immediately life-threatening, these symptoms warrant professional medical evaluation.";
+        break;
+        
+      default:
+        message = `⚠️ ${reason}\n\n`;
+        urgency = "**Please seek immediate medical attention.**";
+        advice = "I'm concerned about the combination of symptoms you've described.";
+    }
+    
+    // Add specific guidance based on escalation type
+    let additionalGuidance = "";
+    if (escalationType === 'life_threatening_symptom') {
+      additionalGuidance = "\n\n**🚨 EMERGENCY ALERT:** These symptoms require immediate emergency medical intervention. Do not delay - call 911 now.";
+    } else if (escalationType === 'severe_urgent_symptom') {
+      additionalGuidance = "\n\n**🆘 URGENT CARE NEEDED:** This is not something to 'wait and see' - emergency room doctors need to evaluate these symptoms today.";
+    } else if (escalationType === 'dangerous_combination') {
+      if (level === 'life_threatening') {
+        additionalGuidance = "\n\n**🚨 CRITICAL COMBINATION:** The combination of symptoms you've described is a medical emergency requiring immediate professional intervention.";
+      } else {
+        additionalGuidance = "\n\n**Why this is concerning:** The combination of symptoms you've described can indicate a serious medical condition that requires immediate attention.";
+      }
+    } else if (escalationType === 'critical_symptoms') {
+      additionalGuidance = "\n\n**Why this is urgent:** These are red-flag symptoms that medical professionals consider high-priority warning signs.";
+    } else if (escalationType === 'pattern_detected') {
+      if (level === 'life_threatening') {
+        additionalGuidance = "\n\n**🚨 EMERGENCY PATTERN:** The symptom pattern indicates a potential medical emergency.";
+      } else {
+        additionalGuidance = "\n\n**Concerning pattern detected:** This symptom pattern requires urgent medical evaluation.";
+      }
+    } else if (escalationType === 'multiple_high_symptoms') {
+      additionalGuidance = "\n\n**Why you should see a doctor:** Multiple concerning symptoms together often indicate conditions that benefit from early medical intervention.";
+    } else if (escalationType === 'concerning_pattern') {
+      additionalGuidance = "\n\n**Why consultation helps:** The pattern of symptoms you're experiencing is worth discussing with a healthcare provider to rule out underlying conditions.";
+    } else if (escalationType === 'multiple_high_symptoms') {
+      additionalGuidance = "\n\n**Why you should see a doctor:** Multiple concerning symptoms together often indicate conditions that benefit from early medical intervention.";
+    } else if (escalationType === 'concerning_pattern') {
+      additionalGuidance = "\n\n**Why consultation helps:** The pattern of symptoms you're experiencing is worth discussing with a healthcare provider to rule out underlying conditions.";
+    }
+    
+    const fullMessage = message + urgency + "\n\n" + advice + additionalGuidance + 
+      "\n\n**Please note:** This is not a medical diagnosis but a recommendation based on symptom patterns that typically warrant professional evaluation.";
+
+    return {
+      ok: true,
+      type: "emergency_escalation",
+      message: fullMessage,
+      stage: "emergency",
+      context_aware: true,
+      follow_up_needed: false,
+      emergency_level: level,
+      escalation_type: escalationType,
+      red_flags_detected: redFlags
+    };
+  }
+
+  // Determine current conversation stage dynamically
+  determineConversationStage() {
+    const symptoms = this.contextMemory.symptoms.size;
+    const timeline = this.contextMemory.timeline.length;
+    
+    if (symptoms === 0) return 'greeting';
+    if (symptoms === 1 && timeline < 3) return 'gathering';
+    if (symptoms > 1) return 'analyzing';
+    if (timeline > 5) return 'summarizing';
+    return 'conversing';
+  }
+
+  // Generate fallback response
+  generateFallbackResponse(analysis, originalMessage) {
+    const symptoms = Array.from(this.contextMemory.symptoms.keys());
+    const empathy = this.getVariedEmpathy();
+    
+    let message = `${empathy}. `;
+    
+    if (symptoms.length > 0) {
+      message += `Based on what you've shared about ${symptoms.join(' and ')}, `;
+      message += `could you tell me more about how these symptoms are affecting you?`;
+    } else {
+      message += `Could you help me understand what specific symptoms you're experiencing?`;
+    }
+    
+    return {
+      ok: true,
+      type: "adaptive_fallback", 
+      message: message,
+      stage: this.determineConversationStage(),
+      context_aware: true,
+      follow_up_needed: true
+    };
+  }
+
+  // Process each stage of the triage flow
+  async processTriageStage(analysis, message) {
+    const currentStage = this.triageFlow.stage;
+    
+    // Determine next stage based on current state and input
+    const nextStage = this.determineNextTriageStage(analysis, currentStage);
+    
+    switch (nextStage) {
+      case 'acknowledge':
+        return await this.generateAcknowledgmentResponse(analysis, message);
+      
+      case 'clarify':
+        return await this.generateClarificationResponse(analysis, message);
+      
+      case 'severity':
+        return await this.generateSeverityResponse(analysis, message);
+      
+      case 'causes':
+        return await this.generateCausesResponse(analysis, message);
+      
+      case 'advice':
+        return await this.generateAdviceResponse(analysis, message);
+      
+      case 'summary':
+        return await this.generateSummaryResponse(analysis, message);
+      
+      default:
+        return await this.generateAdaptiveResponse(analysis, message);
+    }
+  }
+
+  // Determine next triage stage intelligently
+  determineNextTriageStage(analysis, currentStage) {
+    const hasSymptoms = this.contextMemory.symptoms.size > 0;
+    const hasSeverity = Array.from(this.contextMemory.symptoms.values()).some(s => s.severity);
+    const hasDetails = Array.from(this.contextMemory.symptoms.values()).some(s => s.duration || s.triggers?.length > 0);
+    
+    // Check if new symptoms were mentioned this turn
+    const newSymptomsThisTurn = analysis.entities.symptoms.filter(symptom => {
+      const symptomData = this.contextMemory.symptoms.get(symptom);
+      return symptomData && symptomData.firstMentioned === this.conversationFlow.turnCount;
+    });
+    
+    // New symptom reported - acknowledge it (even if we've acknowledged before)
+    if (analysis.intent === 'symptom_report' && (!this.triageFlow.completedStages.has('acknowledge') || newSymptomsThisTurn.length > 0)) {
+      this.triageFlow.stage = 'acknowledge';
+      return 'acknowledge';
+    }
+    
+    // Need clarification on symptoms
+    if (hasSymptoms && !hasDetails && !this.triageFlow.completedStages.has('clarify')) {
+      this.triageFlow.stage = 'clarify';
+      return 'clarify';
+    }
+    
+    // Need severity assessment
+    if (hasSymptoms && hasDetails && !hasSeverity && !this.triageFlow.completedStages.has('severity')) {
+      this.triageFlow.stage = 'severity';
+      return 'severity';
+    }
+    
+    // Ready for possible causes
+    if (hasSymptoms && hasSeverity && !this.triageFlow.completedStages.has('causes')) {
+      this.triageFlow.stage = 'causes';
+      return 'causes';
+    }
+    
+    // Provide advice
+    if (analysis.intent === 'advice_request' || this.shouldProvideAdvice()) {
+      this.triageFlow.stage = 'advice';
+      return 'advice';
+    }
+    
+    // Summary needed
+    if (this.shouldProvideSummary()) {
+      this.triageFlow.stage = 'summary';
+      return 'summary';
+    }
+    
+    return 'adaptive';
+  }
+
+  // Generate acknowledgment response with context
+  async generateAcknowledgmentResponse(analysis, message) {
+    this.triageFlow.completedStages.add('acknowledge');
+    
+    const allSymptoms = Array.from(this.contextMemory.symptoms.keys());
+    const newSymptoms = analysis.entities.symptoms || [];
+    const empathy = this.getVariedEmpathy();
+    
+    let response = "";
+    
+    if (allSymptoms.length > 0) {
+      // Handle multiple symptoms intelligently
+      if (allSymptoms.length === 1) {
+        const symptom = allSymptoms[0];
+        response = `${empathy} you're experiencing ${symptom}. `;
+        
+        // Add context if we have severity or duration
+        const symptomData = this.contextMemory.symptoms.get(symptom);
+        if (symptomData?.severity) {
+          response += `${symptomData.severity} symptoms can definitely be concerning. `;
+        }
+        if (symptomData?.duration) {
+          response += `Having this for ${symptomData.duration.text} must be frustrating. `;
+        }
+      } else {
+        // Multiple symptoms - acknowledge them properly
+        if (newSymptoms.length > 0) {
+          // New symptoms mentioned this turn
+          const newSymptomsText = newSymptoms.join(' and ');
+          const existingSymptomsText = allSymptoms.filter(s => !newSymptoms.includes(s)).join(' and ');
+          
+          if (existingSymptomsText) {
+            response = `${empathy} you're experiencing ${existingSymptomsText}, and now you've also mentioned ${newSymptomsText}. `;
+          } else {
+            response = `${empathy} you're experiencing ${newSymptomsText}. `;
+          }
+        } else {
+          // General acknowledgment of multiple symptoms
+          response = `${empathy} you're experiencing ${allSymptoms.slice(0, -1).join(', ')} and ${allSymptoms[allSymptoms.length - 1]}. `;
+        }
+      }
+    } else {
+      response = `${empathy}. I'm here to help you understand what might be going on. `;
+    }
+
+    // Add clarifying question based on all symptoms
+    const clarifyingQuestion = await this.getNextClarifyingQuestion();
+    response += clarifyingQuestion;
+
+    return {
+      ok: true,
+      type: "triage_acknowledge",
+      message: response,
+      stage: "acknowledge",
+      context_aware: true,
+      follow_up_needed: true
+    };
+  }
+
+  // Generate clarification response
+  async generateClarificationResponse(analysis, message) {
+    this.triageFlow.completedStages.add('clarify');
+    
+    const symptoms = Array.from(this.contextMemory.symptoms.keys());
+    let response = "";
+    
+    if (symptoms.length > 0) {
+      const mainSymptom = symptoms[0];
+      const symptomData = this.contextMemory.symptoms.get(mainSymptom);
+      
+      // Build context summary
+      let contextSummary = `So far you've mentioned ${mainSymptom}`;
+      
+      if (symptomData?.duration) {
+        contextSummary += ` that started ${symptomData.duration.text}`;
+      }
+      
+      if (symptomData?.characteristics?.length > 0) {
+        contextSummary += ` with ${symptomData.characteristics.join(' and ')} characteristics`;
+      }
+      
+      if (symptomData?.triggers?.length > 0) {
+        contextSummary += ` that seems related to ${symptomData.triggers.join(' and ')}`;
+      }
+      
+      contextSummary += ". ";
+      
+      response = contextSummary;
+    }
+
+    // Add next logical question
+    const nextQuestion = await this.getAdaptiveFollowUp(analysis);
+    response += nextQuestion;
+
+    return {
+      ok: true,
+      type: "triage_clarify",
+      message: response,
+      stage: "clarify",
+      context_aware: true,
+      follow_up_needed: true
+    };
+  }
+
+  // Generate severity assessment response
+  async generateSeverityResponse(analysis, message) {
+    this.triageFlow.completedStages.add('severity');
+    
+    const symptoms = Array.from(this.contextMemory.symptoms.entries());
+    let response = "";
+    
+    if (symptoms.length > 0) {
+      const [mainSymptom, data] = symptoms[0];
+      
+      // Build comprehensive context
+      response = `Based on what you've shared about your ${mainSymptom}`;
+      
+      const details = [];
+      if (data.duration) details.push(`lasting ${data.duration.text}`);
+      if (data.severity) details.push(`${data.severity} in intensity`);
+      if (data.characteristics?.length > 0) details.push(`with ${data.characteristics.join(' and ')} qualities`);
+      
+      if (details.length > 0) {
+        response += ` - ${details.join(', ')} - `;
+      } else {
+        response += ", ";
+      }
+      
+      // Assess concern level
+      if (this.contextMemory.concernLevel === 'high') {
+        response += "this pattern is concerning and warrants medical attention. ";
+      } else if (this.contextMemory.concernLevel === 'medium') {
+        response += "this could have several possible causes that we should explore. ";
+      } else {
+        response += "let's explore what might be causing this. ";
+      }
+    }
+
+    // Move to causes or advice
+    const nextQuestion = await this.getTargetedQuestion();
+    response += nextQuestion;
+
+    return {
+      ok: true,
+      type: "triage_severity",
+      message: response,
+      stage: "severity",
+      context_aware: true,
+      follow_up_needed: true
+    };
+  }
+
+  // Generate causes exploration response
+  async generateCausesResponse(analysis, message) {
+    this.triageFlow.completedStages.add('causes');
+    
+    const ollamaStatus = await getOllamaStatus();
+    
+    if (ollamaStatus.available && ollamaStatus.fastestModel) {
+      return await this.getAICausesResponse(analysis, message, ollamaStatus.fastestModel);
+    } else {
+      return this.getStructuredCausesResponse(analysis, message);
+    }
+  }
+
+  // Generate advice response
+  async generateAdviceResponse(analysis, message) {
+    this.triageFlow.completedStages.add('advice');
+    
+    const ollamaStatus = await getOllamaStatus();
+    
+    if (ollamaStatus.available && ollamaStatus.fastestModel) {
+      return await this.getAIAdviceResponse(analysis, message, ollamaStatus.fastestModel);
+    } else {
+      return this.getStructuredAdviceResponse(analysis, message);
+    }
+  }
+
+  // Generate final summary response
+  async generateSummaryResponse(analysis, message) {
+    this.triageFlow.triageComplete = true;
+    
+    const summary = this.buildComprehensiveSummary();
+    const recommendation = this.generateSafeRecommendation();
+    
+    const response = `${summary}\n\n${recommendation}`;
+    
+    return {
+      ok: true,
+      type: "triage_summary",
+      message: response,
+      stage: "complete",
+      context_aware: true,
+      follow_up_needed: false,
+      triage_complete: true
+    };
+  }
+
+  // Helper methods for triage flow
+
+  // Get varied empathy to avoid repetition
+  getVariedEmpathy() {
+    const available = this.conversationFlow.empathyVariations.filter(
+      phrase => !this.conversationFlow.usedPhrases.has(phrase)
+    );
+    
+    if (available.length === 0) {
+      // Reset if all used
+      this.conversationFlow.usedPhrases.clear();
+      available.push(...this.conversationFlow.empathyVariations);
+    }
+    
+    const chosen = available[Math.floor(Math.random() * available.length)];
+    this.conversationFlow.usedPhrases.add(chosen);
+    return chosen;
+  }
+
+  // Get next clarifying question based on what we don't know
+  async getNextClarifyingQuestion() {
+    const symptoms = Array.from(this.contextMemory.symptoms.entries());
+    
+    if (symptoms.length === 0) {
+      return "Can you tell me more about what you're experiencing?";
+    }
+    
+    // Handle multiple symptoms more intelligently
+    if (symptoms.length === 1) {
+      const [symptom, data] = symptoms[0];
+      
+      // Check what information we're missing for single symptom
+      if (!data.duration) {
+        return `When did you first notice the ${symptom}?`;
+      }
+      
+      if (!data.severity) {
+        return `How would you describe the intensity of the ${symptom} - mild, moderate, or severe?`;
+      }
+      
+      if (!data.characteristics || data.characteristics.length === 0) {
+        return `Can you describe what the ${symptom} feels like - is it sharp, dull, throbbing, or something else?`;
+      }
+      
+      if (!data.triggers || data.triggers.length === 0) {
+        return `Have you noticed anything that makes the ${symptom} better or worse?`;
+      }
+      
+      return "Is there anything else about this symptom that concerns you?";
+    } else {
+      // Multiple symptoms - ask about relationships or focus on most recent
+      const mostRecentSymptom = symptoms.reduce((latest, current) => 
+        current[1].firstMentioned > latest[1].firstMentioned ? current : latest
+      );
+      
+      const [recentSymptom, recentData] = mostRecentSymptom;
+      
+      // Ask about the most recently mentioned symptom or relationships
+      if (!recentData.duration) {
+        return `When did the ${recentSymptom} start in relation to your other symptoms?`;
+      }
+      
+      if (symptoms.length === 2) {
+        const otherSymptom = symptoms.find(s => s[0] !== recentSymptom)[0];
+        return `Do you notice if the ${recentSymptom} and ${otherSymptom} happen at the same time, or separately?`;
+      }
+      
+      return `Are these symptoms happening together, or at different times?`;
+    }
+  }
+
+  // Get adaptive follow-up based on previous responses
+  async getAdaptiveFollowUp(analysis) {
+    const symptoms = Array.from(this.contextMemory.symptoms.entries());
+    
+    if (symptoms.length === 0) return "What specific symptoms are you experiencing?";
+    
+    const [mainSymptom, data] = symptoms[0];
+    
+    // Adaptive questions based on what we know
+    if (data.severity === 'severe') {
+      return `Given the severe nature of your ${mainSymptom}, have you noticed any other symptoms alongside it?`;
+    }
+    
+    if (data.characteristics?.includes('sharp')) {
+      return `You mentioned sharp ${mainSymptom} - does this happen when you move or breathe deeply?`;
+    }
+    
+    if (data.characteristics?.includes('intermittent')) {
+      return `Since the ${mainSymptom} comes and goes, how long do the episodes typically last?`;
+    }
+    
+    if (data.triggers?.includes('stress')) {
+      return `You mentioned stress as a trigger - are there specific stressful situations that seem to bring it on?`;
+    }
+    
+    if (data.triggers?.includes('movement')) {
+      return `Since movement affects it, does the ${mainSymptom} happen with all types of movement or specific ones?`;
+    }
+    
+    return `Is there anything else about the ${mainSymptom} that you think might be important?`;
+  }
+
+  // Get targeted question for severity stage
+  async getTargetedQuestion() {
+    const symptoms = Array.from(this.contextMemory.symptoms.entries());
+    
+    if (symptoms.length === 0) return "What would you like to know about managing this?";
+    
+    const [mainSymptom, data] = symptoms[0];
+    
+    if (this.contextMemory.concernLevel === 'high') {
+      return "Given these symptoms, have you experienced anything like this before, or is this completely new for you?";
+    }
+    
+    if (data.duration && data.duration.minutes > 2880) { // More than 2 days
+      return "Since this has been going on for a while, have you tried anything to help with it?";
+    }
+    
+    return "What would be most helpful - understanding possible causes or learning about ways to manage this?";
+  }
+
+  // Check if we should provide advice
+  shouldProvideAdvice() {
+    const hasEnoughInfo = this.contextMemory.symptoms.size > 0 && 
+      Array.from(this.contextMemory.symptoms.values()).some(s => s.severity && s.duration);
+    
+    const userAskedForAdvice = this.conversationHistory.some(turn => 
+      /\b(what should|how do|what can|help|treat|manage)\b/i.test(turn.user)
+    );
+    
+    return hasEnoughInfo && (userAskedForAdvice || this.triageFlow.completedStages.has('severity'));
+  }
+
+  // Check if we should provide summary
+  shouldProvideSummary() {
+    const completedStages = this.triageFlow.completedStages.size;
+    const hasGoodInfo = this.contextMemory.symptoms.size > 0;
+    const longConversation = this.conversationFlow.turnCount > 5;
+    
+    return (completedStages >= 3 && hasGoodInfo) || longConversation;
+  }
+
+  // Build comprehensive summary
+  buildComprehensiveSummary() {
+    if (this.contextMemory.symptoms.size === 0) {
+      return "Based on our conversation, I understand you're looking for health guidance.";
+    }
+    
+    let summary = "From what you've shared, ";
+    
+    const symptomDetails = [];
+    for (const [symptom, data] of this.contextMemory.symptoms) {
+      let detail = symptom;
+      
+      if (data.severity) detail += ` (${data.severity})`;
+      if (data.duration) detail += ` for ${data.duration.text}`;
+      if (data.characteristics?.length > 0) detail += ` with ${data.characteristics.join(' and ')} characteristics`;
+      if (data.triggers?.length > 0) detail += ` triggered by ${data.triggers.join(' and ')}`;
+      
+      symptomDetails.push(detail);
+    }
+    
+    summary += `you're experiencing ${symptomDetails.join(', and ')}`;
+    
+    // Add pattern analysis
+    if (this.contextMemory.concernLevel === 'high') {
+      summary += ". This pattern suggests you should seek medical evaluation";
+    } else if (this.contextMemory.concernLevel === 'medium') {
+      summary += ". This pattern might suggest several possible causes";
+    } else {
+      summary += ". This appears to be a manageable concern";
+    }
+    
+    return summary + ".";
+  }
+
+  // Generate safe recommendation
+  generateSafeRecommendation() {
+    const concernLevel = this.contextMemory.concernLevel;
+    const hasSymptoms = this.contextMemory.symptoms.size > 0;
+    
+    if (concernLevel === 'high' || concernLevel === 'critical') {
+      return "**Recommendation**: Given the nature of your symptoms, I'd recommend contacting your healthcare provider or considering urgent care, especially if symptoms worsen or you develop new concerning signs.";
+    }
+    
+    if (concernLevel === 'medium') {
+      return "**Recommendation**: Consider monitoring your symptoms closely. If they persist, worsen, or you develop additional symptoms, it would be wise to consult with your healthcare provider for proper evaluation.";
+    }
+    
+    if (hasSymptoms) {
+      return "**Recommendation**: Continue monitoring your symptoms. General comfort measures like rest, hydration, and gentle care may help. If symptoms persist or worsen, consider consulting your healthcare provider.";
+    }
+    
+    return "**Recommendation**: Stay attentive to your body's signals and don't hesitate to seek professional medical advice when needed.";
+  }
+
+  // Update concern level based on cumulative evidence
+  updateConcernLevel(analysis) {
+    let concernScore = 0;
+    
+    // Add points for concerning factors
+    if (analysis.urgency === 'critical') concernScore += 10;
+    else if (analysis.urgency === 'high') concernScore += 5;
+    else if (analysis.urgency === 'medium') concernScore += 2;
+    
+    // Check symptom combinations
+    const symptoms = Array.from(this.contextMemory.symptoms.keys());
+    if (symptoms.includes('chest pain') && symptoms.includes('shortness of breath')) concernScore += 8;
+    if (symptoms.includes('headache') && symptoms.includes('dizziness')) concernScore += 3;
+    
+    // Check severity
+    const severities = Array.from(this.contextMemory.symptoms.values()).map(s => s.severity);
+    if (severities.includes('severe')) concernScore += 4;
+    else if (severities.includes('moderate')) concernScore += 2;
+    
+    // Check duration
+    const durations = Array.from(this.contextMemory.symptoms.values()).map(s => s.duration?.minutes || 0);
+    const maxDuration = Math.max(...durations);
+    if (maxDuration > 10080) concernScore += 3; // More than a week
+    else if (maxDuration > 1440) concernScore += 1; // More than a day
+    
+    // Set concern level
+    if (concernScore >= 8) this.contextMemory.concernLevel = 'critical';
+    else if (concernScore >= 5) this.contextMemory.concernLevel = 'high';
+    else if (concernScore >= 2) this.contextMemory.concernLevel = 'medium';
+    else this.contextMemory.concernLevel = 'low';
+  }
+
+  // Store conversation turn with rich context
+  storeConversationTurn(message, response, analysis) {
+    this.conversationHistory.push({
+      turn: this.conversationFlow.turnCount,
+      user: message,
+      bot: response.message,
+      analysis: analysis,
+      stage: this.triageFlow.stage,
+      concernLevel: this.contextMemory.concernLevel,
+      symptomsDiscussed: Array.from(this.contextMemory.symptoms.keys()),
+      timestamp: new Date()
+    });
+  }
+
+  // Update conversation summary for context
+  updateConversationSummary(analysis) {
+    const symptoms = Array.from(this.contextMemory.symptoms.keys());
+    const mainConcerns = symptoms.slice(0, 2); // Focus on top 2 symptoms
+    
+    if (mainConcerns.length > 0) {
+      this.contextMemory.conversationSummary = `Discussion about ${mainConcerns.join(' and ')} (${this.contextMemory.concernLevel} concern level)`;
+    } else {
+      this.contextMemory.conversationSummary = `General health consultation (Turn ${this.conversationFlow.turnCount})`;
+    }
+  }
+
+  // Enhanced contextual follow-up detection
+  isContextualFollowUp(message) {
+    // Only treat as follow-up if we have active conversation context
+    if (this.conversationFlow.turnCount <= 1) return false;
+    
+    // Check for pronouns and references with context
+    const pronouns = /\b(this|that|it|they|these|those)\b/.test(message);
+    const timeRefs = /\b(yes|no|sometimes|often|rarely|always|never)\b/.test(message);
+    const continuations = /\b(also|and|but|however|though|although)\b/.test(message);
+    
+    return pronouns || timeRefs || continuations;
+  }
+
+  // Identify answers to previous questions
+  identifyAnswersToQuestions(message) {
+    const answers = {};
+    
+    // Look for duration answers
+    if (/\d+\s*(minutes?|hours?|days?|weeks?|months?)/i.test(message)) {
+      answers.duration = this.extractDuration(message);
+    }
+    
+    // Look for severity answers
+    if (/\b(mild|moderate|severe|intense|slight|bad|terrible)\b/i.test(message)) {
+      answers.severity = message.match(/\b(mild|moderate|severe|intense|slight|bad|terrible)\b/i)?.[0];
+    }
+    
+    // Look for yes/no answers
+    if (/\b(yes|yeah|yep|no|nope|not really|sometimes|occasionally)\b/i.test(message)) {
+      answers.confirmation = message.match(/\b(yes|yeah|yep|no|nope|not really|sometimes|occasionally)\b/i)?.[0];
+    }
+    
+    return answers;
+  }
+
+  // Identify new information in current message
+  identifyNewInformation(message) {
+    const newInfo = {
+      symptoms: [],
+      triggers: [],
+      characteristics: [],
+      timeframes: []
+    };
+    
+    // Compare with existing knowledge
+    const currentSymptoms = Array.from(this.contextMemory.symptoms.keys());
+    const messageSymptoms = this.extractEntitiesWithContext(message).symptoms;
+    
+    newInfo.symptoms = messageSymptoms.filter(s => !currentSymptoms.includes(s));
+    newInfo.triggers = this.extractTriggers(message);
+    newInfo.characteristics = this.extractCharacteristics(message);
+    
+    return newInfo;
+  }
+
+  // Check for contradictions in user statements
+  checkForContradictions(message) {
+    const contradictions = [];
+    
+    // Check severity contradictions
+    const newSeverity = /\b(mild|moderate|severe)\b/i.exec(message)?.[0];
+    if (newSeverity) {
+      for (const [symptom, data] of this.contextMemory.symptoms) {
+        if (data.severity && data.severity !== newSeverity.toLowerCase()) {
+          contradictions.push(`Severity changed from ${data.severity} to ${newSeverity.toLowerCase()}`);
+        }
+      }
+    }
+    
+    return contradictions;
+  }
+
+  // AI-powered responses for different stages
+
+  // Get AI causes response
+  async getAICausesResponse(analysis, message, model) {
+    const prompt = this.buildCausesPrompt(analysis, message);
+    
+    try {
+      const response = await queryOllamaLight(prompt, model);
+      
+      if (response && response.length > 20) {
+        return {
+          ok: true,
+          type: "ai_causes",
+          message: response,
+          model_used: model,
+          stage: "causes",
+          context_aware: true,
+          follow_up_needed: true
+        };
+      }
+    } catch (error) {
+      console.error('AI causes response error:', error);
+    }
+
+    return this.getStructuredCausesResponse(analysis, message);
+  }
+
+  // Get AI advice response
+  async getAIAdviceResponse(analysis, message, model) {
+    const prompt = this.buildAdvicePrompt(analysis, message);
+    
+    try {
+      const response = await queryOllamaLight(prompt, model);
+      
+      if (response && response.length > 20) {
+        return {
+          ok: true,
+          type: "ai_advice",
+          message: response,
+          model_used: model,
+          stage: "advice",
+          context_aware: true,
+          follow_up_needed: false
+        };
+      }
+    } catch (error) {
+      console.error('AI advice response error:', error);
+    }
+
+    return this.getStructuredAdviceResponse(analysis, message);
+  }
+
+  // Build contextual prompt for causes
+  buildCausesPrompt(analysis, message) {
+    const summary = this.buildComprehensiveSummary();
+    const needsDisclaimer = analysis.needsDisclaimer;
+    
+    let prompt = "You are a helpful medical AI assistant providing information about possible causes. ";
+    
+    if (needsDisclaimer) {
+      prompt += 'Start with: "⚠️ *I provide general health information only. For medical advice, consult healthcare professionals.*"\n\n';
+    }
+    
+    prompt += `${summary}\n\n`;
+    prompt += `Current message: "${message}"\n\n`;
+    prompt += "Based on the symptom pattern described, provide 2-3 possible causes with brief explanations (2-3 sentences total). ";
+    prompt += "End by asking if they'd like to discuss management options or if they have questions about any of these possibilities.";
+    
+    return prompt;
+  }
+
+  // Build contextual prompt for advice
+  buildAdvicePrompt(analysis, message) {
+    const summary = this.buildComprehensiveSummary();
+    const needsDisclaimer = analysis.needsDisclaimer;
+    
+    let prompt = "You are a helpful medical AI assistant providing practical health advice. ";
+    
+    if (needsDisclaimer) {
+      prompt += 'Start with: "⚠️ *I provide general health information only. For medical advice, consult healthcare professionals.*"\n\n';
+    }
+    
+    prompt += `${summary}\n\n`;
+    prompt += `Current message: "${message}"\n\n`;
+    prompt += "Provide practical, actionable advice (3-4 points) for managing these symptoms. ";
+    prompt += "Include both immediate comfort measures and guidance on when to seek medical care. ";
+    prompt += "Keep it supportive and practical.";
+    
+    return prompt;
+  }
+
+  // Structured fallback responses
+
+  // Structured causes response
+  getStructuredCausesResponse(analysis, message) {
+    const symptoms = Array.from(this.contextMemory.symptoms.keys());
+    const mainSymptom = symptoms[0] || 'symptoms';
+    
+    const disclaimer = analysis.needsDisclaimer ? 
+      "⚠️ *I provide general health information only. For medical advice, consult healthcare professionals.*\n\n" : "";
+    
+    let response = disclaimer;
+    response += `Based on your ${mainSymptom}, here are some possible considerations:\n\n`;
+    
+    // Provide structured causes based on symptom
+    if (mainSymptom.includes('headache')) {
+      response += "• **Tension**: Often related to stress, poor posture, or screen time\n";
+      response += "• **Dehydration**: Can cause head pain and pressure\n";
+      response += "• **Sleep patterns**: Changes in sleep can trigger headaches\n\n";
+    } else if (mainSymptom.includes('chest')) {
+      response += "• **Musculoskeletal**: Muscle strain or inflammation\n";
+      response += "• **Respiratory**: Related to breathing or lung function\n";
+      response += "• **Digestive**: Sometimes acid reflux can cause chest discomfort\n\n";
+    } else {
+      response += "• **Physical factors**: Activity, posture, or movement patterns\n";
+      response += "• **Environmental**: Stress, diet, or sleep changes\n";
+      response += "• **Underlying conditions**: Various medical conditions can contribute\n\n";
+    }
+    
+    response += "Would you like to discuss management approaches for any of these possibilities?";
+    
+    return {
+      ok: true,
+      type: "structured_causes",
+      message: response,
+      stage: "causes",
+      context_aware: true,
+      follow_up_needed: true
+    };
+  }
+
+  // Structured advice response
+  getStructuredAdviceResponse(analysis, message) {
+    const symptoms = Array.from(this.contextMemory.symptoms.keys());
+    const mainSymptom = symptoms[0] || 'symptoms';
+    
+    const disclaimer = analysis.needsDisclaimer ? 
+      "⚠️ *I provide general health information only. For medical advice, consult healthcare professionals.*\n\n" : "";
+    
+    let response = disclaimer;
+    response += `Here are some general approaches for managing ${mainSymptom}:\n\n`;
+    
+    // Provide structured advice
+    response += "**Immediate comfort measures:**\n";
+    response += "• Rest and gentle movement as tolerated\n";
+    response += "• Stay hydrated and maintain good nutrition\n";
+    response += "• Apply heat or cold therapy if helpful\n\n";
+    
+    response += "**Monitoring:**\n";
+    response += "• Keep track of symptom patterns and triggers\n";
+    response += "• Note what helps or makes symptoms worse\n\n";
+    
+    response += "**When to seek care:**\n";
+    if (this.contextMemory.concernLevel === 'high') {
+      response += "• Consider contacting your healthcare provider soon\n";
+      response += "• Seek immediate care if symptoms worsen significantly\n";
+    } else {
+      response += "• If symptoms persist or worsen over time\n";
+      response += "• If you develop new or concerning symptoms\n";
+    }
+    
+    return {
+      ok: true,
+      type: "structured_advice",
+      message: response,
+      stage: "advice",
+      context_aware: true,
+      follow_up_needed: false
+    };
+  }
+
+  // Generate adaptive response for complex scenarios
+  async generateAdaptiveResponse(analysis, message) {
+    // Try AI first
+    const ollamaStatus = await getOllamaStatus();
+    
+    if (ollamaStatus.available && ollamaStatus.fastestModel) {
+      const prompt = this.buildAdaptivePrompt(analysis, message);
+      
+      try {
+        const response = await queryOllamaLight(prompt, ollamaStatus.fastestModel);
+        
+        if (response && response.length > 20) {
+          return {
+            ok: true,
+            type: "adaptive_ai",
+            message: response,
+            model_used: ollamaStatus.fastestModel,
+            context_aware: true,
+            follow_up_needed: this.shouldFollowUp(analysis)
+          };
+        }
+      } catch (error) {
+        console.error('Adaptive AI response error:', error);
+      }
+    }
+
+    // Fallback to structured response
+    return this.getSmartFallbackResponse(analysis, message);
+  }
+
+  // Build adaptive prompt
+  buildAdaptivePrompt(analysis, message) {
+    const summary = this.contextMemory.conversationSummary;
+    const recentHistory = this.conversationHistory.slice(-2);
+    
+    let prompt = "You are a helpful medical AI assistant having a natural conversation. ";
+    
+    if (analysis.needsDisclaimer) {
+      prompt += 'Start with: "⚠️ *I provide general health information only. For medical advice, consult healthcare professionals.*"\n\n';
+    }
+    
+    prompt += "Conversation context:\n";
+    if (summary) prompt += `${summary}\n`;
+    
+    if (recentHistory.length > 0) {
+      prompt += "Recent exchange:\n";
+      recentHistory.forEach(turn => {
+        prompt += `User: ${turn.user}\nBot: ${turn.bot}\n`;
+      });
+    }
+    
+    prompt += `\nCurrent message: "${message}"\n\n`;
+    prompt += "Respond naturally and helpfully (2-3 sentences). ";
+    prompt += "Build on the conversation context and provide relevant follow-up if appropriate.";
+    
+    return prompt;
+  }
+
+  // Smart fallback responses
+  getSmartFallbackResponse(analysis, message) {
+    const responses = {
+      symptom_report: this.getSymptomFallback(analysis),
+      advice_request: this.getAdviceFallback(analysis),
+      information_request: this.getInfoFallback(analysis),
+      follow_up_response: this.getFollowUpFallback(analysis)
+    };
+
+    const response = responses[analysis.intent] || this.getGeneralFallback();
+
+    return {
+      ok: true,
+      type: "smart_fallback",
+      message: response,
+      context_aware: true,
+      follow_up_needed: this.shouldFollowUp(analysis)
+    };
+  }
+
+  // Specific fallback responses with context awareness
+  getSymptomFallback(analysis) {
+    const disclaimer = analysis.needsDisclaimer ? 
+      "⚠️ *I provide general health information only. For medical advice, consult healthcare professionals.*\n\n" : "";
+    
+    const symptoms = Array.from(this.contextMemory.symptoms.keys());
+    const empathy = this.getVariedEmpathy();
+    
+    let response = disclaimer + empathy;
+    
+    if (symptoms.length > 0) {
+      const mainSymptom = symptoms[symptoms.length - 1]; // Most recent
+      response += ` you're experiencing ${mainSymptom}. `;
+      
+      if (analysis.urgency === 'high') {
+        response += "This sounds significant and worth addressing. ";
+      } else {
+        response += "Let me help you understand this better. ";
+      }
+    } else {
+      response += " you're dealing with health concerns. I'm here to help. ";
+    }
+    
+    return response + "Can you tell me more about when this started?";
+  }
+
+  getAdviceFallback(analysis) {
+    const summary = this.buildComprehensiveSummary();
+    const disclaimer = analysis.needsDisclaimer ? 
+      "⚠️ *I provide general health information only. For medical advice, consult healthcare professionals.*\n\n" : "";
+    
+    return disclaimer + summary + "\n\n" +
+      "Here are some general recommendations:\n" +
+      "• Monitor your symptoms and note any patterns\n" +
+      "• Maintain good self-care with rest and hydration\n" +
+      "• Consider gentle activities as you feel able\n" +
+      "• Consult healthcare providers if symptoms persist or worsen\n\n" +
+      "Would you like more specific guidance on any of these points?";
+  }
+
+  getInfoFallback(analysis) {
+    if (this.contextMemory.symptoms.size > 0) {
+      const symptoms = Array.from(this.contextMemory.symptoms.keys()).join(' and ');
+      return `I'd be happy to provide information about ${symptoms}. What specific aspect would you like to know more about - possible causes, management approaches, or when to seek care?`;
+    }
+    
+    return "I'm here to provide health information and guidance. What specific topic would you like to explore?";
+  }
+
+  getFollowUpFallback(analysis) {
+    const summary = this.contextMemory.conversationSummary;
+    
+    if (summary) {
+      return `Thank you for that information. ${summary} Is there anything else about your symptoms that might be helpful to discuss?`;
+    }
+    
+    return "I appreciate you sharing that. Is there anything else you'd like me to know about what you're experiencing?";
+  }
+
+  getGeneralFallback() {
+    if (this.contextMemory.symptoms.size > 0) {
+      return "I'm here to help you understand your health concerns. What would be most useful to discuss next?";
+    }
+    
+    return "I'm here to assist with your health questions. You can ask about symptoms, conditions, general wellness, or when to seek medical care. How can I help?";
+  }
+
+  // Determine if follow-up is needed
+  shouldFollowUp(analysis) {
+    // Always follow up on new symptoms
+    if (analysis.intent === 'symptom_report') return true;
+    
+    // Follow up if we're missing key information
+    const symptoms = Array.from(this.contextMemory.symptoms.values());
+    const missingInfo = symptoms.some(s => !s.severity || !s.duration);
+    if (missingInfo) return true;
+    
+    // Follow up on concerning symptoms
+    if (analysis.urgency === 'high' || this.contextMemory.concernLevel === 'high') return true;
+    
+    // Continue triage flow if not complete
+    if (!this.triageFlow.triageComplete && this.triageFlow.completedStages.size < 4) return true;
+    
+    return false;
+  }
+
+  // Emergency response
+  getEmergencyResponse() {
+    return {
+      ok: true,
+      type: "emergency",
+      message: "🚨 **MEDICAL EMERGENCY** 🚨\n\n" +
+               "If this is a medical emergency:\n" +
+               "• **Call 911 immediately** (US)\n" +
+               "• **Go to the nearest emergency room**\n" +
+               "• **Call your local emergency number**\n\n" +
+               "Do not wait or rely on AI for emergency medical situations. Get professional help immediately!",
+      urgency: "critical",
+      follow_up_needed: false
+    };
+  }
+
+  // Greeting response with variety
+  getGreetingResponse() {
+    const greetings = [
+      "Hello! 👋 I'm your medical AI assistant. I can help with health questions, symptoms, and wellness guidance. What brings you here today?",
+      "Hi there! 😊 I'm here to assist with your health concerns. Whether it's about symptoms, treatments, or general health questions, I'm ready to help. What's on your mind?",
+      "Good to see you! 👋 I'm your AI health companion. I can provide information about symptoms, health conditions, and when to seek care. How can I help you today?"
+    ];
+    
+    const randomGreeting = greetings[Math.floor(Math.random() * greetings.length)];
+    
+    return {
+      ok: true,
+      type: "greeting",
+      message: randomGreeting,
+      context_aware: false,
+      follow_up_needed: false
+    };
+  }
+
+  // Error response
+  getErrorResponse() {
+    return {
+      ok: false,
+      type: "error",
+      message: "I apologize, but I encountered an issue processing your message. " +
+               "Could you please try rephrasing your question? I'm here to help with your health concerns.",
+      follow_up_needed: false
+    };
+  }
+
+  // Reset conversation context
+  resetContext() {
+    this.conversationHistory = [];
+    this.contextMemory = {
+      symptoms: new Map(),
+      timeline: [],
+      userResponses: new Map(),
+      medicalHistory: {
+        conditions: new Set(),
+        medications: new Set(),
+        allergies: new Set()
+      },
+      currentFocus: null,
+      concernLevel: 'low',
+      conversationSummary: '',
+      lastResponse: null,
+      followUpNeeded: false
+    };
+    this.triageFlow = {
+      stage: 'greeting',
+      completedStages: new Set(),
+      currentSymptom: null,
+      questionsAsked: new Set(),
+      triageComplete: false
+    };
+    this.conversationFlow = {
+      turnCount: 0,
+      empathyVariations: [
+        "I understand", "I see", "That sounds concerning", "I hear you", 
+        "Thank you for sharing that", "That makes sense", "I appreciate you telling me"
+      ],
+      usedPhrases: new Set()
+    };
+  }
+
+  // Check if we should reset context (new conversation)
+  shouldResetContext(message, analysis) {
+    const lower = message.toLowerCase();
+    
+    // Explicit reset phrases
+    const resetPhrases = [
+      /\b(new topic|different topic|change topic|move on|forget that|start over|clear context)\b/,
+      /\b(let's talk about something else|that's enough about|done with that)\b/,
+      /\b(anyway|by the way|actually|oh and|speaking of something else)\b/
+    ];
+    
+    // Check for explicit reset requests
+    for (const phrase of resetPhrases) {
+      if (phrase.test(lower)) {
+        return true;
+      }
+    }
+    
+    // Check if this is a completely new symptom conversation
+    const hasExistingSymptoms = this.contextMemory.symptoms.size > 0;
+    const hasNewSymptoms = analysis.entities.symptoms.length > 0;
+    
+    if (hasExistingSymptoms && hasNewSymptoms) {
+      const existingSymptoms = Array.from(this.contextMemory.symptoms.keys());
+      const newSymptoms = analysis.entities.symptoms;
+      const hasOverlap = newSymptoms.some(s => existingSymptoms.includes(s));
+      
+      // If no symptom overlap AND it's a past tense or new timeframe
+      const isPastTense = /\b(had|was|were|yesterday|last|ago|before)\b/.test(lower);
+      const startsNewly = /^(i had|i have|yesterday|last)/i.test(message.trim());
+      
+      if (!hasOverlap && (isPastTense || startsNewly)) {
+        return true; // Different symptoms + different time = new conversation
+      }
+    }
+    
+    // Reset if greeting after existing conversation
+    if (analysis.intent === 'greeting' && hasExistingSymptoms) {
+      return true;
+    }
+    
+    // Reset if user seems to be starting fresh with different context
+    const seemsLikeNewStart = /^(i |yesterday |last |my )/i.test(message.trim()) && 
+                              hasExistingSymptoms && 
+                              hasNewSymptoms;
+    
+    return seemsLikeNewStart;
+  }
+
+  // Reset conversation context
+  resetContext() {
+    this.contextMemory = {
+      symptoms: new Map(),
+      timeline: [],
+      userResponses: new Map(),
+      medicalHistory: {
+        conditions: new Set(),
+        medications: new Set(),
+        allergies: new Set()
+      },
+      currentFocus: null,
+      concernLevel: 'low',
+      conversationSummary: '',
+      lastResponse: null,
+      followUpNeeded: false
+    };
+    
+    this.triageFlow = {
+      stage: 'greeting',
+      completedStages: new Set(),
+      currentSymptom: null,
+      questionsAsked: new Set(),
+      triageComplete: false
+    };
+    
+    this.conversationFlow.turnCount = 0;
+    this.conversationFlow.usedPhrases.clear();
+    
+    console.log('🔄 Context reset - starting fresh conversation');
+  }
+
+  // Get conversation summary for debugging
+  getConversationSummary() {
+    return {
+      turnCount: this.conversationFlow.turnCount,
+      currentStage: this.triageFlow.stage,
+      completedStages: Array.from(this.triageFlow.completedStages),
+      symptoms: Array.from(this.contextMemory.symptoms.keys()),
+      concernLevel: this.contextMemory.concernLevel,
+      conversationSummary: this.contextMemory.conversationSummary,
+      triageComplete: this.triageFlow.triageComplete
+    };
+  }
+}
+
+export default SmartMedicalBot;

@@ -1,0 +1,112 @@
+.auth-modal__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(30, 32, 70, 0.38);
+  backdrop-filter: blur(4px);
+}
+.auth-modal {
+  position: relative;
+  width: min(420px, calc(100vw - 2rem));
+  box-sizing: border-box;
+  padding: 2rem;
+  border-radius: 1.25rem;
+  background: #fff;
+  box-shadow: 0 20px 60px rgba(68, 55, 120, 0.22);
+  color: #333;
+}
+.auth-modal h2 {
+  margin: 0 0 1.25rem;
+  color: #6666c9;
+}
+.auth-modal__google {
+  display: flex;
+  justify-content: center;
+  min-height: 44px;
+  margin-bottom: 0.25rem;
+}
+.auth-modal__google-link {
+  width: 100%;
+  border: 1px solid #dadbe8;
+  border-radius: 999px;
+  padding: 0.75rem 1rem;
+  background: #fff;
+  color: #444;
+  font-weight: 600;
+  cursor: pointer;
+}
+.auth-modal__divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #9294ab;
+  font-size: 0.85rem;
+}
+.auth-modal__divider::before,
+.auth-modal__divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e6e6f2;
+}
+.auth-modal form,
+.auth-modal label {
+  display: flex;
+  flex-direction: column;
+}
+.auth-modal form {
+  gap: 1rem;
+}
+.auth-modal label {
+  gap: 0.4rem;
+  font-weight: 600;
+}
+.auth-modal input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.85rem 1rem;
+  border: 1px solid #d7d8ef;
+  border-radius: 0.75rem;
+  font: inherit;
+}
+.auth-modal input:focus {
+  border-color: #7b7be5;
+  outline: 3px solid rgba(123, 123, 229, 0.12);
+}
+.auth-modal__close {
+  position: absolute;
+  top: 0.7rem;
+  right: 0.8rem;
+  border: none;
+  background: none;
+  color: #777;
+  font-size: 1.8rem;
+  cursor: pointer;
+}
+.auth-modal__submit {
+  border: none;
+  border-radius: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: linear-gradient(90deg, #7b7be5, #b6a1e7);
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+.auth-modal__submit:disabled {
+  opacity: 0.65;
+}
+.auth-modal__switch {
+  margin-top: 1rem;
+  border: none;
+  background: none;
+  color: #6666c9;
+  cursor: pointer;
+}
+.auth-modal__error {
+  padding: 0.75rem;
+  border-radius: 0.75rem;
+  background: #fff0f0;
+  color: #b42318;
+}

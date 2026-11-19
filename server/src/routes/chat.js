@@ -1,80 +1,162 @@
-
-import express from 'express';
-import { getRelevantChunks, getLLMResponse } from '../services/vectorStore.js';
+// chat.js (Express router)
+import express from "express";
+import ChatSession from "../models/ChatSession.js";
+import { requireAuth } from "../middleware/auth.js";
+import {
+  generateAnswer,
+  getRelevantChunks,
+  generateFallback,
+  detectIntent
+} from "../lightweight_query.js";
 
 const router = express.Router();
+router.use(requireAuth);
 
-// POST /api/chat { message: string, history?: [{role, text}] }
-router.post('/', async (req, res) => {
-	const { message, history } = req.body;
-	if (!message) return res.status(400).json({ error: 'Message is required' });
-	try {
-		// 0. Check for general follow-up/confirmation question
-		function isGeneralFollowup(msg) {
-			const lower = msg.toLowerCase();
-			return /^(are these|is this|is that|is it|can i|should i|do i|does this|is everything|is the above|is the following|are the above|are the following|is that correct|is this correct|is it correct|is this true|is that true|is it true|is this good|is that good|are these good|are those good|is this safe|is that safe|are these safe|are those safe|is this recommended|is that recommended|are these recommended|are those recommended)/.test(lower);
-		}
+// Health check and debug route for GET /api/chat
+router.get('/', (req, res) => {
+  res.json({ message: 'Chat API is working. Use POST to send messages.' });
+});
 
-		// 1. Concatenate recent history for retrieval (user+assistant turns)
-		let retrievalQuery = message;
-		if (Array.isArray(history) && history.length > 0) {
-			// Use last 3 turns (user+assistant) for context
-			const recent = history.slice(-6).map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.text}`).join('\n');
-			retrievalQuery = recent + '\n' + 'User: ' + message;
-		}
-		// 2. Retrieve relevant context from Pinecone
-		const contextChunks = await getRelevantChunks(retrievalQuery);
+// Get all chat sessions
+router.get('/sessions', async (req, res) => {
+  try {
+    const sessions = await ChatSession.find({ userId: req.user.sub }).sort({ updatedAt: -1 });
+    res.json(sessions);
+  } catch (err) {
+    console.error('Error fetching sessions:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
+// Get a specific chat session by ID
+router.get('/sessions/:id', async (req, res) => {
+  try {
+    const session = await ChatSession.findOne({ _id: req.params.id, userId: req.user.sub });
+    if (!session) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    res.json(session);
+  } catch (err) {
+    console.error('Error fetching session:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
-			// 2.5. Q&A extractor for direct context answers (for greetings, common Q&A)
-			function extractQA(contextChunks, userMessage) {
-				const qPattern = /Q\d+:\s*(.+?)\s*A\d+:\s*(.+?)(?=\s*Q\d+:|$)/gs;
-				for (const chunk of contextChunks) {
-					const text = chunk.metadata && chunk.metadata.text ? chunk.metadata.text : '';
-					let match;
-					while ((match = qPattern.exec(text)) !== null) {
-						const q = match[1].trim().toLowerCase();
-						const a = match[2].trim();
-						if (userMessage.trim().toLowerCase() === q) {
-							return a;
-						}
-					}
-				}
-				return null;
-			}
-			const directAnswer = extractQA(contextChunks, message);
-			if (directAnswer) {
-				return res.json({ answer: { message: directAnswer } });
-			}
+// Helper: detect common general followup patterns (we treat them as conversational)
+function isGeneralFollowup(msg = "") {
+  const lower = (msg || "").toLowerCase();
+  return /^(are these|is this|is that|is it|can i|should i|do i|does this|is everything|is the above|is this correct|is that correct|is it correct|is this true|is that true)/.test(lower);
+}
 
-			// If no relevant context chunks (all empty or irrelevant), reply with fallback
-			const allTexts = contextChunks.map(c => (c.metadata && c.metadata.text ? c.metadata.text.trim() : '')).join(' ').toLowerCase();
-			const isGreeting = /^(hi|hello|hlo|hey|good morning|good evening|good afternoon|how are you|what's up|thank you|thanks|okay|alright|yes|no)$/.test(message.trim().toLowerCase());
-			if ((!allTexts || allTexts === '') || (isGreeting && !directAnswer)) {
-				return res.json({ answer: { message: "Sorry, I did not find any relevant information for your query. Please ask a specific question or try again." } });
-			}
+// Extract Q/A pairs from context chunks for direct matching (if you keep Q/A text inside pdfs)
+function extractQA(contextChunks = [], userMessage = "") {
+  const qLower = (userMessage || "").trim().toLowerCase();
+  const qPattern = /Q\d+:\s*(.+?)\s*A\d+:\s*(.+?)(?=\s*Q\d+:|$)/gis;
+  for (const chunk of contextChunks) {
+    const text = chunk.metadata && chunk.metadata.text ? chunk.metadata.text : "";
+    let match;
+    while ((match = qPattern.exec(text)) !== null) {
+      const q = (match[1] || "").trim().toLowerCase();
+      const a = (match[2] || "").trim();
+      if (q === qLower) return a;
+    }
+  }
+  return null;
+}
 
-		// 3. Check for general follow-up/confirmation question (after Q&A extractor)
-		if (isGeneralFollowup(message) && Array.isArray(history) && history.length > 0) {
-			// Find last assistant message with a structured object
-			const lastAssistant = [...history].reverse().find(m => m.role === 'assistant' && typeof m.text === 'object');
-			if (lastAssistant && lastAssistant.text) {
-				// If the last assistant message has a non-empty section, reply instantly
-				const keys = Object.keys(lastAssistant.text).filter(k => Array.isArray(lastAssistant.text[k]) && lastAssistant.text[k].length > 0);
-				if (keys.length > 0) {
-					// Simple logic: if previous answer had content, say Yes
-					return res.json({ answer: { message: 'Yes, these are recommended based on the previous information provided.' } });
-				}
-			}
-		}
+router.post("/", async (req, res) => {
+  const { message, history = [], sessionId, name } = req.body;
+  if (!message) return res.status(400).json({ error: "Message is required" });
 
-		// 4. Pass history to LLM for context-aware answer
-		const answer = await getLLMResponse({ message, history }, contextChunks);
-		res.json({ answer });
-	} catch (err) {
-		console.error('Chatbot error:', err);
-		res.status(500).json({ error: 'Internal server error' });
-	}
+  try {
+    console.log(`📨 New chat request: "${message.substring(0, 50)}..."`);
+    
+    // 1) Build retrieval query (use recent history + current)
+    let retrievalQuery = message;
+    if (Array.isArray(history) && history.length > 0) {
+      const recent = history.slice(-4).map(m => 
+        `${m.role === "user" ? "User" : "Assistant"}: ${typeof m.text === "string" ? m.text : JSON.stringify(m.text)}`
+      ).join("\n");
+      retrievalQuery = recent + "\nUser: " + message;
+    }
+
+    // 2) Determine intent and get relevant context
+    const intent = detectIntent(message);
+    console.log(`🎯 Intent: ${intent}`);
+    
+    const { matches: contextChunks, maxScore } = await getRelevantChunks(retrievalQuery, intent, 10);
+    console.log(`📚 Found ${contextChunks.length} context chunks, max score: ${maxScore.toFixed(3)}`);
+
+    // 3) Generate enhanced medical response
+    const medicalResult = await generateAnswer({ message, history, sessionId }, contextChunks);
+    
+    let assistantResponse;
+    let responseMessage;
+
+    if (medicalResult.ok) {
+      // Success case
+      responseMessage = medicalResult.message;
+      assistantResponse = {
+        message: medicalResult.message,
+        model_used: medicalResult.model_used,
+        context_count: medicalResult.context_count,
+        type: medicalResult.type,
+        priority: medicalResult.priority || "normal"
+      };
+      
+      console.log(`✅ Response generated using ${medicalResult.model_used || 'unknown model'}`);
+    } else {
+      // Fallback case
+      console.log(`⚠️ Medical model failed (${medicalResult.reason}), using fallback...`);
+      
+      const fallbackResult = await generateFallback({ message, history });
+      responseMessage = fallbackResult.message;
+      assistantResponse = {
+        message: fallbackResult.message,
+        type: "fallback",
+        fallback_reason: medicalResult.reason
+      };
+    }
+
+    // 4) Save to database
+    let chatSession = null;
+    if (sessionId) {
+      chatSession = await ChatSession.findOne({ _id: sessionId, userId: req.user.sub });
+    }
+    
+    if (!chatSession) {
+      const sessionName = name || message.substring(0, 50) + (message.length > 50 ? "..." : "");
+      chatSession = new ChatSession({ 
+        userId: req.user.sub,
+        name: sessionName, 
+        messages: [] 
+      });
+    }
+
+    // Add messages to session
+    chatSession.messages.push({ role: "user", text: message });
+    chatSession.messages.push({ role: "assistant", text: responseMessage });
+    chatSession.updatedAt = new Date();
+    
+    await chatSession.save();
+
+    console.log(`💾 Saved to session: ${chatSession._id}`);
+
+    // 5) Return response
+    return res.json({ 
+      answer: assistantResponse,
+      sessionId: chatSession._id,
+      intent: intent,
+      context_count: contextChunks.length
+    });
+
+  } catch (err) {
+    console.error("❌ Chat error:", err);
+    return res.status(500).json({ 
+      error: "I encountered an error processing your request. Please try again.",
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
 });
 
 export default router;

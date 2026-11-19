@@ -3,7 +3,7 @@ import './Home.css';
 import Testimonials from '../components/Testimonials';
 import FAQ from '../components/FAQ';
 
-const Home = () => (
+const Home = ({ onTryNow }) => (
   <div className="home">
     <h1 className="home__heading">Welcome to</h1>
     <div className="home__gradient">your AI Health Chat</div>
@@ -23,7 +23,7 @@ const Home = () => (
         </div>
       </div>
     </div>
-    <button className="home__try-btn">Try now</button>
+    <button className="home__try-btn" onClick={onTryNow}>Try now</button>
   <Testimonials />
   <FAQ />
   </div>

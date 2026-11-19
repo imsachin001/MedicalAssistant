@@ -1,8 +1,9 @@
-import { queryPinecone, generateAnswer } from '../query.js';
+import { getRelevantChunks as getChunks, generateAnswer } from '../query.js';
 
 export async function getRelevantChunks(question) {
-  // Use the same logic as queryPinecone in query.js
-  return (await queryPinecone(question)).matches || [];
+  // Use the same logic as getRelevantChunks in query.js
+  const result = await getChunks(question);
+  return result.matches || [];
 }
 
 // Accepts { message, history } for context-aware answers
