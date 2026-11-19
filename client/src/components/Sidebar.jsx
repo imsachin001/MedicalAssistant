@@ -1,5 +1,6 @@
 
 import React, { useEffect, useState } from 'react';
+import { API_URL } from '../config';
 import './Sidebar.css';
 
 const Sidebar = ({ onSelectChat, onNewChat, onSaveChat, currentSessionId, token }) => {
@@ -10,7 +11,7 @@ const Sidebar = ({ onSelectChat, onNewChat, onSaveChat, currentSessionId, token 
     async function fetchChats() {
       setLoading(true);
       try {
-        const res = await fetch('http://localhost:5000/api/chat/sessions', {
+        const res = await fetch(`${API_URL}/api/chat/sessions`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         const data = await res.json();

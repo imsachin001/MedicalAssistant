@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { API_URL } from '../config';
 import './AuthModal.css';
 
 const AuthModal = ({ onAuthenticated, onClose }) => {
@@ -21,7 +22,7 @@ const AuthModal = ({ onAuthenticated, onClose }) => {
           setError('');
           setLoading(true);
           try {
-            const apiResponse = await fetch('http://localhost:5000/api/auth/google', {
+            const apiResponse = await fetch(`${API_URL}/api/auth/google`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ credential: response.credential })
@@ -74,7 +75,7 @@ const AuthModal = ({ onAuthenticated, onClose }) => {
             type="button"
             className="auth-modal__google-link"
             onClick={() => {
-              window.location.href = 'http://localhost:5000/api/auth/google/redirect';
+              window.location.href = `${API_URL}/api/auth/google/redirect`;
             }}
           >
             Continue with Google

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { API_URL } from './config';
 import Navbar from './components/Navbar';
 import Home from './pages/Home';
 import Assistant from './pages/Assistant';
@@ -38,7 +39,7 @@ const App = () => {
       return;
     }
 
-    fetch('http://localhost:5000/api/auth/me', {
+    fetch(`${API_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${token}` }
     })
       .then(res => res.ok ? res.json() : Promise.reject())

@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { API_URL } from '../config';
 import Sidebar from '../components/Sidebar';
 import './Assistant.css';
 
@@ -20,7 +21,7 @@ const Assistant = ({ token }) => {
   const handleSelectChat = async (id) => {
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:5000/api/chat/sessions/${id}`, {
+      const res = await fetch(`${API_URL}/api/chat/sessions/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       const data = await res.json();
@@ -47,7 +48,7 @@ const Assistant = ({ token }) => {
     try {
       // Save with first user message as name
       const name = messages.find(m => m.role === 'user')?.text?.slice(0, 40) || 'Chat';
-      const res = await fetch('http://localhost:5000/api/chat', {
+      const res = await fetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -70,7 +71,7 @@ const Assistant = ({ token }) => {
     setInput('');
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/chat', {
+      const res = await fetch(`${API_URL}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
