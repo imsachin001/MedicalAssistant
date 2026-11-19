@@ -26,11 +26,27 @@ app.use(cors({
 }));
 app.use(express.json());
 
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/medicalai', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-}).then(() => console.log('MongoDB connected'))
-  .catch(error => console.error('MongoDB connection error:', error));
+const mongoUri = process.env.MONGODB_URI;
+
+if (process.env.NODE_ENV === 'production' && !mongoUri) {
+  throw new Error('MONGODB_URI is required in production');
+}
+
+const startServer = async () => {
+  try {
+    await mongoose.connect(mongoUri || 'mongodb://localhost:27017/medicalai');
+    console.log('MongoDB connected');
+  } catch (error) {
+    console.error('MongoDB connection error:', error);
+    if (process.env.NODE_ENV === 'production') {
+      process.exit(1);
+    }
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server listening on port ${PORT}`);
+  });
+};
 
 app.get('/', (req, res) => {
   res.json({ message: 'DocTalk backend is running!' });
@@ -39,6 +55,4 @@ app.get('/', (req, res) => {
 app.use('/api/chat', chatRoute);
 app.use('/api/auth', authRoute);
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server listening on port ${PORT}`);
-});
+startServer();
