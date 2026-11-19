@@ -21,6 +21,11 @@
   margin: 0 0 1.25rem;
   color: #6666c9;
 }
+.auth-modal__description {
+  margin: -0.75rem 0 1.25rem;
+  color: #666;
+  text-align: center;
+}
 .auth-modal__google {
   display: flex;
   justify-content: center;
@@ -109,4 +114,59 @@
   border-radius: 0.75rem;
   background: #fff0f0;
   color: #b42318;
+}
+.auth-modal__status {
+  margin-top: 0.75rem;
+  color: #6666c9;
+  text-align: center;
+}
+
+.logout-confirm__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: grid;
+  place-items: center;
+  background: rgba(30, 32, 70, 0.38);
+  backdrop-filter: blur(4px);
+}
+.logout-confirm {
+  width: min(380px, calc(100vw - 2rem));
+  box-sizing: border-box;
+  padding: 1.75rem;
+  border-radius: 1.25rem;
+  background: #fff;
+  box-shadow: 0 20px 60px rgba(68, 55, 120, 0.22);
+  text-align: center;
+}
+.logout-confirm h2 {
+  margin: 0 0 0.5rem;
+  color: #444;
+}
+.logout-confirm p {
+  margin: 0 0 1.5rem;
+  color: #666;
+}
+.logout-confirm__actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+}
+.logout-confirm__cancel,
+.logout-confirm__confirm {
+  min-width: 110px;
+  border-radius: 999px;
+  padding: 0.75rem 1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.logout-confirm__cancel {
+  border: 1px solid #dadbe8;
+  background: #fff;
+  color: #555;
+}
+.logout-confirm__confirm {
+  border: none;
+  background: #7b7be5;
+  color: #fff;
 }

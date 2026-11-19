@@ -74,3 +74,29 @@
 .home__try-btn:hover {
   background: linear-gradient(90deg, #7b7be5, #b6a1e7, #e7b6e7);
 }
+
+.home__footer {
+  margin: 2rem -2rem -2rem;
+  padding: 2rem;
+  background: #eef2f8;
+  border-top: 1px solid #dde3ed;
+}
+
+.home__disclaimer {
+  max-width: 1200px;
+  margin: 0 auto;
+  color: #555;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.home__disclaimer strong {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: #333;
+  font-size: 1.1rem;
+}
+
+.home__disclaimer p {
+  margin: 0;
+}

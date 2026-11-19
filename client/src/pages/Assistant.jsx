@@ -104,10 +104,9 @@ const Assistant = ({ token }) => {
                 🩺 Medical AI Assistant
               </h2>
               <div style={{ textAlign: 'center', maxWidth: 600, margin: '0 auto', color: '#555', fontSize: '1.05rem', background: '#fffbe7', borderRadius: 12, padding: '1.5rem', boxShadow: '0 2px 8px rgba(123,123,229,0.04)', marginBottom: '2rem' }}>
-                <strong>⚠️ Medical Disclaimer:</strong> This AI assistant provides general medical information for educational purposes only. 
-                It is not a substitute for professional medical advice, diagnosis, or treatment. Always consult qualified healthcare providers for medical concerns.
-                <br/><br/>
-                <strong>🚨 Emergency:</strong> In case of medical emergency, call 911 or go to the nearest emergency room immediately.
+                <strong>Medical Disclaimer</strong>
+                <br />
+                This application provides AI-generated educational information based on retrieved medical reference documents. It may contain inaccurate or incomplete information. It is not intended to diagnose, treat, or prevent any disease, and should not replace advice from a qualified healthcare professional. Do not use it for emergencies.
               </div>
               <div style={{ textAlign: 'center', fontSize: '1rem', color: '#666' }}>
                 <p>💡 <strong>I can help you with:</strong></p>

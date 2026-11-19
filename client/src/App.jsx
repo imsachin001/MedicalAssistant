@@ -9,6 +9,7 @@ const App = () => {
   const [user, setUser] = useState(null);
   const [authMode, setAuthMode] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   useEffect(() => {
     const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''));
@@ -56,6 +57,7 @@ const App = () => {
   const handleLogout = () => {
     localStorage.removeItem('doctalk_token');
     setUser(null);
+    setShowLogoutConfirm(false);
     setPage('home');
   };
 
@@ -72,18 +74,37 @@ const App = () => {
         setPage={(nextPage) => nextPage === 'assistant' ? openAssistant() : setPage(nextPage)}
         user={user}
         onLogin={() => setAuthMode('login')}
-        onSignup={() => setAuthMode('signup')}
-        onLogout={handleLogout}
+        onLogout={() => setShowLogoutConfirm(true)}
       />
       {page === 'home' && <Home onTryNow={openAssistant} />}
       {page === 'assistant' && user && <Assistant token={localStorage.getItem('doctalk_token')} />}
       {authMode && (
         <AuthModal
-          mode={authMode}
-          onModeChange={setAuthMode}
           onAuthenticated={handleAuthenticated}
           onClose={() => setAuthMode(null)}
         />
+      )}
+      {showLogoutConfirm && (
+        <div className="logout-confirm__backdrop" role="presentation" onMouseDown={() => setShowLogoutConfirm(false)}>
+          <section
+            className="logout-confirm"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="logout-confirm-title"
+            onMouseDown={event => event.stopPropagation()}
+          >
+            <h2 id="logout-confirm-title">Sign out?</h2>
+            <p>Are you sure you want to sign out of MediQuery?</p>
+            <div className="logout-confirm__actions">
+              <button type="button" className="logout-confirm__cancel" onClick={() => setShowLogoutConfirm(false)}>
+                Cancel
+              </button>
+              <button type="button" className="logout-confirm__confirm" onClick={handleLogout}>
+                Sign Out
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </>
   );

@@ -10,7 +10,7 @@ const faqs = [
   {
     question: 'How do I get started with DocTalk.ai?',
     answer:
-      'Getting started is easy. Once registered, you can begin chatting with our AI health assistant immediately. Just type in your questions or concerns, and the assistant will provide helpful insights and recommendations.',
+      'Select Sign In and continue with your Google account. Once signed in, you can start chatting with the MediQuery AI health assistant.',
   },
   {
     question: 'What kind of health issues can DocTalk.ai help with?',

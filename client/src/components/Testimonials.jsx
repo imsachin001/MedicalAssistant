@@ -1,42 +1,41 @@
 import React from 'react';
 import './Testimonials.css';
 
-const testimonials = [
+const steps = [
   {
-    name: 'Dr. Anna Greig',
-    title: 'Head of Nuclear Medicine Centers',
-    role: 'Head of Nuclear Medicine Centers',
-    roleClass: 'testimonial__role--doctor',
-    text: `"I’m really impressed with DocTalk.ai. As a doctor, I’ve seen how AI can truly help with accurate diagnoses and better patient care. This platform offers reliable advice that benefits both patients and doctors alike."`,
+    number: '01',
+    title: 'Document Processing',
+    text: 'Extract and split medical PDF content into chunks.',
   },
   {
-    name: 'Jessica K.',
-    title: 'User',
-    role: 'User',
-    roleClass: 'testimonial__role--user',
-    text: `"Having DocTalk.ai feels like having a personal health helper with me all the time. It’s helped me make good choices for my family’s health. I’d recommend it to anyone who wants to take charge of their well-being."`,
+    number: '02',
+    title: 'Embeddings',
+    text: 'Generate vector representations using Sentence Transformers.',
   },
   {
-    name: 'Michael B.',
-    title: 'User',
-    role: 'User',
-    roleClass: 'testimonial__role--user',
-    text: `"DocTalk.ai has changed how I take care of my health! It’s so convenient to get health information whenever I need it. The tips I’ve gotten have really helped me."`,
+    number: '03',
+    title: 'Vector Search',
+    text: 'Store and retrieve relevant chunks using Pinecone.',
+  },
+  {
+    number: '04',
+    title: 'AI Responses',
+    text: 'Use retrieved context to generate answers with an LLM.',
   },
 ];
 
 const Testimonials = () => (
   <section className="testimonials">
-    <h2 className="testimonials__heading">What our users say</h2>
+    <h2 className="testimonials__heading">How DocTalk.ai Works</h2>
     <p className="testimonials__subheading">
-      Discover why thousands trust DocTalk.ai for their health needs.
+      A Retrieval-Augmented Generation (RAG) pipeline connects medical documents with conversational AI.
     </p>
     <div className="testimonials__cards">
-      {testimonials.map((t, i) => (
-        <div className="testimonial__card" key={i}>
-          <div className="testimonial__name">{t.name}</div>
-          <div className={`testimonial__role ${t.roleClass}`}>{t.title}</div>
-          <div className="testimonial__text">{t.text}</div>
+      {steps.map((step) => (
+        <div className="testimonial__card" key={step.number}>
+          <div className="testimonial__name">{step.number}</div>
+          <div className="testimonial__role">{step.title}</div>
+          <div className="testimonial__text">{step.text}</div>
         </div>
       ))}
     </div>
