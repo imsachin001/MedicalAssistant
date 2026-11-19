@@ -101,6 +101,8 @@ Desktop.ini
 # MedicalAI specific
 data/
 models/
+!server/src/models/
+!server/src/models/*.js
 outputs/
 node_modules/
 server/node_modules/
